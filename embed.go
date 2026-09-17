@@ -9,6 +9,7 @@ import "embed"
 // keep the packaging boundary independent of unrelated checkout additions.
 //
 //go:embed k8s/ollama.yaml k8s/kagent-values.yaml k8s/hello-world.yaml k8s/tools-agent.yaml
+//go:embed k8s/orka-k8s-tool.yaml scripts/orka-k8s-tool.py
 //go:embed k8s/plane/namespace.yaml k8s/plane/postgres.yaml k8s/plane/proxy.yaml
 //go:embed k8s/plane/upstreams.yaml k8s/plane/network-policy.yaml
 //go:embed k8s/models

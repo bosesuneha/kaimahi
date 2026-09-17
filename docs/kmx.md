@@ -98,6 +98,7 @@ Credential issuance/renewal TTL remains 60 seconds–365 days.
 | Command | Current behavior |
 |---|---|
 | `kmx quickstart` | kind + keyless Ollama + minimal kagent + hello-world + completed answer; no plane/governance enabled. [Getting started](getting-started.md#one-command-and-an-agent-that-answers) |
+| `kmx quickstart-wizard` | Experimental TUI: author an Orka agent while kind, Ollama/model, and Orka start in the background; then validate, apply, and optionally run its first Task. |
 | `kmx up` | full local kagent profile and both demo agents; `--step` selects cluster, ollama, model, kagent, agent or tools-agent |
 | `kmx lift` / `kmx lift down` | provision AKS and land a platform on it, then owned cleanup. **`--payload` is required and has no default**: `orka` lands the pinned Orka (and creates no Provider — that stays yours), `kagent` lands the legacy runtime and its demo agents on governed Copilot. Both share every cluster phase; they differ only in what runs agents. [AKS](aks.md) |
 | `kmx agent list` | readiness, acceptance, ModelConfig, tool wiring; table/JSON/YAML |

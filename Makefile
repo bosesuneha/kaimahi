@@ -14,7 +14,7 @@ CRED ?= hello-world
 
 # Relink for every embedded asset: the binary also runs outside a clone.
 KMX_SOURCES := go.mod embed.go $(shell find cmd/kmx internal/kmx -name '*.go' 2>/dev/null)
-KMX_ASSETS := k8s/ollama.yaml k8s/kagent-values.yaml k8s/hello-world.yaml k8s/tools-agent.yaml \
+KMX_ASSETS := k8s/ollama.yaml k8s/kagent-values.yaml k8s/hello-world.yaml k8s/tools-agent.yaml k8s/orka-k8s-tool.yaml scripts/orka-k8s-tool.py \
 	k8s/egress-hosted.yaml k8s/egress-copilot.yaml \
 	$(wildcard k8s/plane/*.yaml) $(wildcard k8s/models/*.yaml) \
 	$(wildcard k8s/observability/*) \

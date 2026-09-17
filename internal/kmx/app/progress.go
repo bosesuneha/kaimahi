@@ -24,10 +24,20 @@ func (a *App) timeNow() time.Time {
 }
 
 func (a *App) runPhase(p phase, fn func() error) error {
+	if a.operationProgress != nil {
+		a.operationProgress(p.name, "active", nil)
+	}
 	started := a.timeNow()
 	ui := a.presenter()
 	fmt.Fprintf(a.Err, "\n%s  [%d/%d] %s\n", ui.Phase("PHASE"), p.current, p.total, p.name)
 	err := fn()
+	if a.operationProgress != nil {
+		status := "done"
+		if err != nil {
+			status = "failed"
+		}
+		a.operationProgress(p.name, status, err)
+	}
 	elapsed := a.timeNow().Sub(started)
 	if err != nil {
 		fmt.Fprintf(a.Err, "%s [%d/%d] %s (%s)\n", ui.Failure("FAILED"), p.current, p.total, p.name, formatElapsed(elapsed))

@@ -706,7 +706,7 @@ def the_number_of_embedded_shell_scripts_is_the_same_in_both_places(doc: Doc, tr
     """
     m = once(phrase("including {n} shell scripts"), doc.preamble, "the embedded shell scripts")
     return compare_count(number(m.group(1)),
-                         len({p for p in embedded(tree) if p.startswith("scripts/")}),
+                         len({p for p in embedded(tree) if p.startswith("scripts/") and p.endswith(".sh")}),
                          "shell scripts embedded in the binary")
 
 
@@ -1241,6 +1241,18 @@ def selftest_fixture(tree: Tree) -> int:
             failed += 1
         else:
             print(f"ok   {label}")
+
+    # Embedded Python helpers count as scripts in the inventory but not shell
+    # scripts in the preamble's language-specific claim.
+    mixed_scripts = Tree(tree.root, files=["embed.go", "scripts/run.sh", "scripts/server.py"])
+    mixed_scripts._text = {"embed.go": "//go:embed scripts/run.sh scripts/server.py\n"}
+    findings = the_number_of_embedded_shell_scripts_is_the_same_in_both_places(
+        Doc("Installed assets, including one shell scripts and one Python helper.\n"), mixed_scripts)
+    if findings:
+        print(f"FAIL embedded Python was counted as shell: {findings}")
+        failed += 1
+    else:
+        print("ok   embedded script language counts distinguish shell from Python")
 
     real = tree.read(MAP)
     problems, ran = check(tree, real)

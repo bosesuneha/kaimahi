@@ -1,0 +1,128 @@
+# Read-only resource listing for the Orka quickstart. Tool execution is HTTP;
+# model-supplied parameters never become shell commands or arbitrary API paths.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kmx-k8s-reader
+  namespace: orka-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kmx-k8s-reader
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, namespaces, nodes, configmaps, persistentvolumeclaims]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kmx-k8s-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kmx-k8s-reader
+subjects:
+  - kind: ServiceAccount
+    name: kmx-k8s-reader
+    namespace: orka-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kmx-k8s-tool
+  namespace: orka-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kmx-k8s-tool
+  template:
+    metadata:
+      annotations:
+        kaimahi.dev/tool-code: kmx-tool-code-checksum
+      labels:
+        app: kmx-k8s-tool
+    spec:
+      serviceAccountName: kmx-k8s-reader
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reader
+          image: python:3.13-alpine
+          command: [python3, -B, /app/server.py]
+          ports:
+            - containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          volumeMounts:
+            - name: code
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: code
+          configMap:
+            name: kmx-k8s-tool
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kmx-k8s-tool
+  namespace: orka-system
+spec:
+  selector:
+    app: kmx-k8s-tool
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: core.orka.ai/v1alpha1
+kind: Tool
+metadata:
+  name: k8s-get-resources
+  namespace: orka-system
+spec:
+  description: List live Kubernetes resources, read-only. Returns names, namespaces and status. For running pods set resource=pods and phase=Running to exclude completed Jobs. Answer concisely from the returned names; never invent names. Omit namespace for all namespaces.
+  parameters:
+    type: object
+    additionalProperties: false
+    properties:
+      resource:
+        type: string
+        enum: [pods, services, namespaces, nodes, configmaps, persistentvolumeclaims, deployments, statefulsets, daemonsets, replicasets, jobs, cronjobs]
+      namespace:
+        type: string
+        description: Optional namespace; omit for all namespaces.
+      phase:
+        type: string
+        enum: [Pending, Running, Succeeded, Failed, Unknown]
+        description: Optional pod phase filter. Use Running when asked which pods are running.
+    required: [resource]
+  http:
+    url: http://kmx-k8s-tool.orka-system.svc.cluster.local:8080/resources
+    method: POST
+    timeout: 15s

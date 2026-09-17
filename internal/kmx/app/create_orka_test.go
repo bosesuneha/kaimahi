@@ -147,6 +147,9 @@ func TestOrkaKubectlHelper(t *testing.T) {
 			} else {
 				raw, err := os.ReadFile(filepath.Join(dir, name+"-"+kind+".json"))
 				if err != nil {
+					if scenario == "lift-reuse" && os.IsNotExist(err) && slices.Contains(args, "--ignore-not-found=true") {
+						os.Exit(0)
+					}
 					fail()
 				}
 				var obj map[string]any
@@ -199,6 +202,10 @@ func TestOrkaKubectlHelper(t *testing.T) {
 		}
 		os.Exit(0)
 	}
+	if scenario == "lift-reuse" && slices.Contains(args, "replace") && slices.Contains(args, "--dry-run=server") {
+		_ = json.NewEncoder(os.Stdout).Encode(call.Document)
+		os.Exit(0)
+	}
 	if slices.Contains(args, "create") {
 		if slices.Contains(args, "token") {
 			if !slices.Contains(args, "--duration=10m") || !slices.Contains(args, "json") || !slices.Contains(args, "reader") {
@@ -230,6 +237,9 @@ func TestOrkaKubectlHelper(t *testing.T) {
 		meta := call.Document["metadata"].(map[string]any)
 		meta["uid"] = strings.ToLower(call.Document["kind"].(string)) + "-uid"
 		meta["generation"] = 1
+		if scenario == "lift-reuse" {
+			meta["resourceVersion"] = "1"
+		}
 		body, _ := json.Marshal(call.Document)
 		_ = os.WriteFile(filepath.Join(dir, meta["name"].(string)+"-"+strings.ToLower(call.Document["kind"].(string))+"s.core.orka.ai.json"), body, 0600)
 		_, _ = os.Stdout.Write(body)

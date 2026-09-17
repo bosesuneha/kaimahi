@@ -182,6 +182,10 @@ func (s *orkaResultSession) close() {
 }
 
 func (s *orkaResultSession) get(ctx context.Context, namespace, name string) (int, map[string]json.RawMessage, error) {
+	return s.getTaskResource(ctx, namespace, name, "result", nil)
+}
+
+func (s *orkaResultSession) getTaskResource(ctx context.Context, namespace, name, resource string, query url.Values) (int, map[string]json.RawMessage, error) {
 	// Bind each caller's request to both its own deadline and the session's
 	// lifetime. The pinned connection, not this liveness check, prevents redial.
 	ctx, cancel := context.WithCancel(ctx)
@@ -198,7 +202,11 @@ func (s *orkaResultSession) get(ctx context.Context, namespace, name string) (in
 	}
 	// Names were validated before generation; redirects and HTTP_PROXY are
 	// disabled, and the transport can only use the session's existing socket.
-	endpoint := s.base + "/api/v1/tasks/" + url.PathEscape(name) + "/result?namespace=" + url.QueryEscape(namespace)
+	if query == nil {
+		query = url.Values{}
+	}
+	query.Set("namespace", namespace)
+	endpoint := s.base + "/api/v1/tasks/" + url.PathEscape(name) + "/" + resource + "?" + query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return 0, nil, fmt.Errorf("cannot construct result request")
@@ -255,7 +263,12 @@ func (s *orkaResultSession) probe(ctx context.Context, namespace, name string) e
 }
 
 func (a *App) waitOrkaTaskResult(ctx context.Context, namespace string, id orkaIdentity, session *orkaResultSession) (answer string, err error) {
+	return a.waitOrkaTaskResultProgress(ctx, namespace, id, session, nil)
+}
+
+func (a *App) waitOrkaTaskResultProgress(ctx context.Context, namespace string, id orkaIdentity, session *orkaResultSession, ready func()) (answer string, err error) {
 	succeeded := false
+	var before *orkaObject
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("Task %s/%s UID %s (execution succeeded: %t): %w; no execution retry or cleanup", namespace, id.Name, id.UID, succeeded, err)
@@ -271,6 +284,10 @@ func (a *App) waitOrkaTaskResult(ctx context.Context, namespace string, id orkaI
 		}
 		succeeded = object.Status.Phase == "Succeeded"
 		if succeeded && object.Status.ResultRef.Available {
+			before = object
+			if ready != nil {
+				ready()
+			}
 			break
 		}
 		if err := orkaPause(ctx); err != nil {
@@ -279,9 +296,13 @@ func (a *App) waitOrkaTaskResult(ctx context.Context, namespace string, id orkaI
 	}
 	for {
 		// Both checks surround the actual HTTP read, not merely the earlier poll.
-		before, err := a.readOrkaObject(ctx, namespace, id)
-		if err != nil {
-			return "", err
+		// The successful status read above is already the identity/state check
+		// immediately before the first HTTP read. Re-read only on result retries.
+		if before == nil {
+			before, err = a.readOrkaObject(ctx, namespace, id)
+			if err != nil {
+				return "", err
+			}
 		}
 		if !orkaTaskSuccessful(before) {
 			return "", fmt.Errorf("Task no longer has successful terminal state and available result")
@@ -331,6 +352,7 @@ func (a *App) waitOrkaTaskResult(ctx context.Context, namespace string, id orkaI
 			}
 			return answer, nil
 		}
+		before = nil
 		if err := orkaPause(ctx); err != nil {
 			return "", fmt.Errorf("result remained unavailable: %w", err)
 		}

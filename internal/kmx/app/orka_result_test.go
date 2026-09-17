@@ -321,7 +321,9 @@ func TestOrkaTaskAnswerUsesOneFreshNameAndReadChecks(t *testing.T) {
 			t.Fatal("token entered argv or document")
 		}
 	}
-	if taskWrites != 1 || taskReads < 3 {
+	// The completed-state poll now doubles as the pre-result identity check;
+	// one further check still follows the HTTP read.
+	if taskWrites != 1 || taskReads < 2 {
 		t.Fatalf("writes=%d reads=%d", taskWrites, taskReads)
 	}
 	body, err := os.ReadFile(opt.Out)

@@ -1,9 +1,28 @@
 package run
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 )
+
+func TestRunnerContextCancelsActiveCommand(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &Runner{Context: ctx}
+	done := make(chan error, 1)
+	go func() { done <- r.Run("sleep", "30") }()
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled command error=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled command remained active")
+	}
+}
 
 // Poll is bounded by ATTEMPTS, not by wall-clock — the shell's
 // `for _ in $(seq 1 N)`. The difference bites exactly where it matters: each
@@ -41,5 +60,28 @@ func TestPollStopsAtTheFirstSuccess(t *testing.T) {
 func TestPollWithNoAttemptsFails(t *testing.T) {
 	if Poll(0, time.Millisecond, func() bool { return true }) {
 		t.Error("zero attempts must not report success")
+	}
+}
+
+func TestPollContextCancelsRetryDelay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	checked := make(chan struct{})
+	done := make(chan bool, 1)
+	go func() {
+		done <- PollContext(ctx, 60, time.Hour, func() bool {
+			close(checked) // A second check would panic.
+			return false
+		})
+	}()
+	<-checked
+	cancel()
+	select {
+	case ready := <-done:
+		if ready {
+			t.Fatal("cancelled poll reported success")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not interrupt retry delay")
 	}
 }

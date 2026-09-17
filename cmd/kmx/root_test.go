@@ -39,6 +39,48 @@ func TestHelpVersionCompletionDoNotLoadConfig(t *testing.T) {
 	}
 }
 
+func TestInteractiveCommandsExposeVerboseFlag(t *testing.T) {
+	for _, path := range [][]string{{"quickstart-wizard"}, {"agent", "chat"}} {
+		var out, errOut bytes.Buffer
+		deps, _ := testDependencies(&out, &errOut)
+		root := newRootCommand(&commandState{deps: deps})
+		cmd, _, err := root.Find(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		flag := cmd.Flags().Lookup("verbose")
+		if flag == nil || flag.DefValue != "false" {
+			t.Fatalf("%v missing default-off verbose flag", path)
+		}
+		if err := cmd.ParseFlags([]string{"--verbose"}); err != nil {
+			t.Fatal(err)
+		}
+		if enabled, _ := cmd.Flags().GetBool("verbose"); !enabled {
+			t.Fatalf("%v did not accept --verbose", path)
+		}
+	}
+}
+
+func TestQuickstartExposesAzureDiscoveryAlternative(t *testing.T) {
+	var out, diagnostics bytes.Buffer
+	deps, _ := testDependencies(&out, &diagnostics)
+	root := newRootCommand(&commandState{deps: deps})
+	cmd, _, err := root.Find([]string{"quickstart-wizard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flag := cmd.Flags().Lookup("azure-discovery")
+	if flag == nil || flag.DefValue != "cli" {
+		t.Fatal("CLI default or discovery alternative missing")
+	}
+	if err := cmd.ParseFlags([]string{"--azure-discovery", "sdk"}); err != nil {
+		t.Fatal(err)
+	}
+	if value, _ := cmd.Flags().GetString("azure-discovery"); value != "sdk" {
+		t.Fatalf("value=%q", value)
+	}
+}
+
 func TestGuardRetryKeepsInvocationArgumentsAndResolvedTarget(t *testing.T) {
 	var out, errOut bytes.Buffer
 	deps, _ := testDependencies(&out, &errOut)
@@ -119,7 +161,7 @@ func TestTheCommandTreeIsExactlyWhatIsListedHere(t *testing.T) {
 		"ctx", "down", "flow", "govern", "ledger",
 		"lift", "lift down", "metrics", "migrate", "models", "models add",
 		"models credential", "models credential copilot", "orka", "orka install", "orka status",
-		"plane", "quickstart",
+		"plane", "quickstart", "quickstart-wizard",
 		"restore", "status",
 		"up", "use", "version", "watch",
 	}

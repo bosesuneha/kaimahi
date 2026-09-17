@@ -37,21 +37,38 @@ type progressPresenter interface {
 // App carries the resolved configuration and the streams every command
 // writes to.
 type App struct {
-	Cfg *config.Config
-	Run *run.Runner
-	Out io.Writer
+	chatClusterName string
+	liftReuse       bool
+	// operationProgress reports real stage transitions to an owning deployment UI.
+	operationProgress func(name, status string, err error)
+	Cfg               *config.Config
+	Run               *run.Runner
+	Out               io.Writer
 	// InvocationCommand is the shell-quoted CLI invocation used for guard retry
 	// advice. Interactive sub-operations leave it empty and supply their own.
 	InvocationCommand string
 	// chatJSON forces raw A2A JSON from `agent chat` on a terminal.
-	chatJSON bool
-	Err      io.Writer
-	Stdin    *os.File
+	chatJSON           bool
+	chatVerbose        bool
+	chatInference      string
+	azureDiscoveryMode string
+	copilotCLI         string
+	copilotModel       string
+	Err                io.Writer
+	Stdin              *os.File
 	// now is injectable so progress timing can be tested without sleeping.
 	now func() time.Time
 	// progressUI replaces destination detection in tests only. Production uses
 	// cliui.New against Err so styling follows the actual output stream.
 	progressUI progressPresenter
+	// localModels replaces provider discovery and terminal selection in tests.
+	// Nil uses the bounded loopback detectors and real terminal streams.
+	localModels *localModelEnvironment
+	// selectedLocalModel is non-nil only when this invocation elected to reuse
+	// a model that was already installed on the host.
+	selectedLocalModel *localModel
+	localModelsChecked bool
+	localModelVerified bool
 
 	// provisioned records the cluster tools this run had to fetch, so a
 	// command that reports structured output can say what it put on the
@@ -83,6 +100,14 @@ func New(cfg *config.Config) *App {
 	r := run.Default()
 	r.Env = cfg.KindEnv()
 	return &App{Cfg: cfg, Run: r, Out: os.Stdout, Err: os.Stderr, Stdin: os.Stdin}
+}
+
+// operationContext is shared by commands, network requests, and retry waits.
+func (a *App) operationContext() context.Context {
+	if a.Run != nil && a.Run.Context != nil {
+		return a.Run.Context
+	}
+	return context.Background()
 }
 
 // kubectl returns a kubectl argument list carrying the explicit --context.
@@ -222,6 +247,10 @@ func (a *App) apply(name string) error {
 	if err != nil {
 		return err
 	}
+	return a.applyBytes(name, body)
+}
+
+func (a *App) applyBytes(name string, body []byte) error {
 	fmt.Fprintf(a.Err, "kubectl --context %s apply -f - # (embedded k8s/%s)\n", a.Cfg.KubeContext, name)
 	quiet := *a.Run
 	quiet.Echo = false

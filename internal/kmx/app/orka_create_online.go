@@ -88,6 +88,18 @@ func (a *App) guardOrkaCreate(ctx context.Context, opt CreateOptions) error {
 }
 
 func (a *App) createOrkaOnline(ctx context.Context, opt CreateOptions, bundle *scaffold.OrkaBundle) (err error) {
+	stage := "Validate schemas and prerequisites"
+	report := func(status string, err error) {
+		if a.operationProgress != nil {
+			a.operationProgress(stage, status, err)
+		}
+	}
+	report("active", nil)
+	defer func() {
+		if err != nil {
+			report("failed", err)
+		}
+	}()
 	if err := a.guardOrkaCreate(ctx, opt); err != nil {
 		return err
 	}
@@ -111,7 +123,21 @@ func (a *App) createOrkaOnline(ctx context.Context, opt CreateOptions, bundle *s
 	if err != nil {
 		return err
 	}
+	existing := map[string]*orkaIdentity{}
+	if a.liftReuse && bundle.Task != nil {
+		return fmt.Errorf("lift cannot reuse or resubmit Tasks")
+	}
 	for _, doc := range bundle.Documents()[1:] {
+		if a.liftReuse {
+			id, err := a.matchingLiftResource(ctx, opt.Namespace, doc)
+			if err != nil {
+				return err
+			}
+			if id != nil {
+				existing[id.Kind] = id
+			}
+			continue
+		}
 		if err := a.orkaAbsent(ctx, opt.Namespace, doc); err != nil {
 			return err
 		}
@@ -133,7 +159,13 @@ func (a *App) createOrkaOnline(ctx context.Context, opt CreateOptions, bundle *s
 	default:
 		return fmt.Errorf("Provider Secret key check returned an invalid presence marker")
 	}
+	report("done", nil)
+	stage = "Validate server admission"
+	report("active", nil)
 	for _, doc := range bundle.Documents()[1:] {
+		if existing[doc["kind"].(string)] != nil {
+			continue
+		}
 		body, err := json.Marshal(doc)
 		if err != nil {
 			return err
@@ -163,9 +195,12 @@ func (a *App) createOrkaOnline(ctx context.Context, opt CreateOptions, bundle *s
 			return err
 		}
 	}
-	if err := a.emitOrka(opt, document); err != nil {
-		return err
+	if !a.liftReuse {
+		if err := a.emitOrka(opt, document); err != nil {
+			return err
+		}
 	}
+	report("done", nil)
 	var created []string
 	defer func() {
 		if err != nil {
@@ -173,15 +208,42 @@ func (a *App) createOrkaOnline(ctx context.Context, opt CreateOptions, bundle *s
 		}
 	}()
 	for _, doc := range []map[string]any{bundle.Provider, bundle.Agent} {
-		id, err := a.createOrkaObject(ctx, opt.Namespace, doc)
+		stage = "Create " + doc["kind"].(string)
+		report("active", nil)
+		var id orkaIdentity
+		var err error
+		reused := false
+		if a.liftReuse {
+			match, checkErr := a.matchingLiftResource(ctx, opt.Namespace, doc)
+			if checkErr != nil {
+				return checkErr
+			}
+			if match != nil {
+				id = *match
+				reused = true
+			}
+		}
+		if id.UID == "" {
+			id, err = a.createOrkaObject(ctx, opt.Namespace, doc)
+		} else {
+			a.notef("Reusing matching %s/%s", id.Kind, id.Name)
+		}
 		if err != nil {
 			return err
 		}
 		created = append(created, id.Kind+"/"+id.Name+" UID "+id.UID)
+		if reused {
+			report("skipped", nil)
+		} else {
+			report("done", nil)
+		}
+		stage = "Wait for " + id.Kind + " Ready"
+		report("active", nil)
 		a.notef("Created %s/%s (UID %s); waiting for current-generation Ready.", id.Kind, id.Name, id.UID)
 		if err := a.waitOrkaReady(ctx, opt.Namespace, id); err != nil {
 			return err
 		}
+		report("done", nil)
 	}
 	if bundle.Task == nil {
 		a.notef("Orka Provider and Agent are Ready; no model response was tested.")

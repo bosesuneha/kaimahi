@@ -4,6 +4,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
@@ -22,7 +23,8 @@ func TestSlashTrieMatchesPrefixes(t *testing.T) {
 		prefix string
 		want   []string
 	}{
-		{"/", []string{"/exit", "/govern", "/help", "/history", "/new", "/resume", "/retry", "/session", "/sessions", "/tools", "/ungovern"}},
+		{"/", []string{"/exit", "/govern", "/help", "/history", "/new", "/resume", "/retry", "/session", "/sessions", "/tools", "/ungovern", "/verbose-off", "/verbose-on"}},
+		{"/verbose", []string{"/verbose-off", "/verbose-on"}},
 		{"/h", []string{"/help", "/history"}},
 		{"/s", []string{"/session", "/sessions"}},
 		{"/sess", []string{"/session", "/sessions"}},
@@ -31,6 +33,40 @@ func TestSlashTrieMatchesPrefixes(t *testing.T) {
 	} {
 		if got := commandNames(slashMatches(tc.prefix)); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("slashMatches(%q)=%v, want %v", tc.prefix, got, tc.want)
+		}
+	}
+}
+
+func TestOrkaSlashCompletionOnlyOffersItsCommands(t *testing.T) {
+	matches := slashMatchesFrom(orkaSlashCommands, "/")
+	names := strings.Join(commandNames(matches), ",")
+	for _, want := range []string{"/agent", "/tools", "/lift", "/inference-copilot", "/verbose-on"} {
+		if !strings.Contains(names, want) {
+			t.Fatalf("missing %s: %s", want, names)
+		}
+	}
+	if strings.Contains(names, "/govern") || strings.Contains(names, "/session") {
+		t.Fatal("kagent commands offered to Orka")
+	}
+	if got := slashMatchesFrom(orkaSlashCommands, "/inference-"); len(got) != 2 {
+		t.Fatalf("matches=%v", got)
+	}
+	if got := slashMatchesFrom(orkaSlashCommands, "/tools "); len(got) != 0 {
+		t.Fatal("popup remained on arguments")
+	}
+}
+
+func TestSlashPopupFitsAndKeepsSelectionVisible(t *testing.T) {
+	rows := slashPopup(orkaSlashCommands, 8, 32, 6)
+	if len(rows) > 6 {
+		t.Fatal("popup too tall")
+	}
+	if !strings.Contains(strings.Join(rows, "\n"), "/verbose-off") {
+		t.Fatal("selection scrolled out")
+	}
+	for _, row := range rows {
+		if lipgloss.Width(row) > 32 {
+			t.Fatalf("row too wide: %q", row)
 		}
 	}
 }
@@ -89,7 +125,7 @@ func dispatchedSlashCommands(t *testing.T) map[string]bool {
 	}
 	// Two shapes appear in the switch: an exact match on the whole line, and
 	// a prefix match for the commands that take an argument.
-	pattern := regexp.MustCompile(`message == "(/[a-z]+)"|strings\.HasPrefix\(message, "(/[a-z]+) "\)`)
+	pattern := regexp.MustCompile(`message == "(/[a-z-]+)"|strings\.HasPrefix\(message, "(/[a-z-]+) "\)`)
 	dispatched := map[string]bool{}
 	for _, match := range pattern.FindAllStringSubmatch(string(source), -1) {
 		for _, name := range match[1:] {

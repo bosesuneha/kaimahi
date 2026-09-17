@@ -272,7 +272,11 @@ func (a *App) fetchOrkaInstaller() ([]byte, error) {
 	fmt.Fprintf(a.Err, "curl -fsSL %s # (sha256-pinned)\n", url)
 
 	client := &http.Client{Timeout: 60 * time.Second}
-	response, err := client.Get(url)
+	request, err := http.NewRequestWithContext(a.operationContext(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("fetching Orka's installer from %s: %w\n"+
 			"  Nothing was applied. This command needs the internet once, to read their tag", url, err)

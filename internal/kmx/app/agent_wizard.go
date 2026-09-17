@@ -44,6 +44,12 @@ func finishCreateWizardOptions(opt *CreateOptions) error {
 	}
 	if opt.Instructions == "" && opt.InstructionText == "" {
 		opt.InstructionText = "You are " + opt.Name + ", a declarative Orka agent. Your purpose is: " + opt.Description + "\nAnswer briefly and say plainly when you do not know something."
+		for _, tool := range strings.Split(opt.Tools, ",") {
+			if strings.TrimSpace(tool) == quickstartK8sTool {
+				opt.InstructionText += "\n" + quickstartK8sInstructions
+				break
+			}
+		}
 	}
 	if err := validateOrkaResultOptions(opt); err != nil {
 		return err
@@ -58,30 +64,34 @@ func finishCreateWizardOptions(opt *CreateOptions) error {
 }
 
 func (a *App) CreateAgentInteractive(opt CreateOptions) error {
+	completed, cancelled, err := a.collectCreateAgentInteractive(opt)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		a.notef("Agent creation cancelled. Nothing was written or applied.")
+		return nil
+	}
+	return a.CreateAgent(completed)
+}
+
+func (a *App) collectCreateAgentInteractive(opt CreateOptions) (CreateOptions, bool, error) {
 	errFile, visible := a.Err.(*os.File)
 	if a.Stdin == nil || !visible || !term.IsTerminal(int(a.Stdin.Fd())) || !term.IsTerminal(int(errFile.Fd())) {
-		return fmt.Errorf("kmx agent create needs a name in non-interactive input: kmx agent create <name> [flags]")
+		return opt, false, fmt.Errorf("kmx agent create needs a name in non-interactive input: kmx agent create <name> [flags]")
 	}
 	if os.Getenv("TERM") == "dumb" {
 		completed, err := collectCreateOptions(bufio.NewScanner(a.Stdin), a.Err, opt)
 		if errors.Is(err, errCreateCancelled) {
-			a.notef("Agent creation cancelled. Nothing was written or applied.")
-			return nil
+			return opt, true, nil
 		}
-		if err != nil {
-			return err
-		}
-		return a.CreateAgent(completed)
+		return completed, false, err
 	}
 	completed, err := runCreateWizard(a.Stdin, a.Err, opt)
 	if errors.Is(err, errCreateCancelled) {
-		a.notef("Agent creation cancelled. Nothing was written or applied.")
-		return nil
+		return opt, true, nil
 	}
-	if err != nil {
-		return err
-	}
-	return a.CreateAgent(completed)
+	return completed, false, err
 }
 
 func collectCreateOptions(scanner lineScanner, out io.Writer, opt CreateOptions) (CreateOptions, error) {
@@ -163,7 +173,7 @@ func collectCreateOptions(scanner lineScanner, out io.Writer, opt CreateOptions)
 		fmt.Fprintln(out, createTaskAuthorityNotice)
 	}
 	for {
-		apply, err := promptValue(scanner, out, "Create Orka resources in "+opt.Namespace+"? (Y/n)", "y", true)
+		apply, err := promptValue(scanner, out, fmt.Sprintf("Create Agent %q (Orka agent) in namespace %q? (Y/n)", opt.Name, opt.Namespace), "y", true)
 		if err != nil {
 			return opt, err
 		}

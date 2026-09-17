@@ -1,6 +1,7 @@
 package cliui
 
 import (
+	"image/color"
 	"strconv"
 	"strings"
 
@@ -248,4 +249,83 @@ func (o Output) Callout(kind CalloutKind, title string, fields []Field) string {
 		style = style.Width(o.cap.Width - 4)
 	}
 	return style.Render(body)
+}
+
+// FocusKind identifies the one control currently accepting keyboard input.
+// User messages retain a quiet border in the transcript; other passive content
+// uses Fields, reports, or ordinary headings.
+type FocusKind int
+
+const (
+	FocusMessage FocusKind = iota
+	FocusQuestion
+	FocusApproval
+)
+
+// FocusFrame is a complete focused editor render plus the cursor position
+// within it. Rows never exceed width in display cells.
+type FocusFrame struct {
+	Rows         []string
+	CursorRow    int
+	CursorColumn int
+}
+
+// FocusInput renders a rounded input frame. The caller owns repainting and
+// replaces it with durable transcript content on submission.
+func (o Output) FocusInput(kind FocusKind, prompt, value, hint string, width int) FocusFrame {
+	title, color := "MESSAGE", lipgloss.Blue
+	if kind == FocusQuestion {
+		title, color = "ANSWER", lipgloss.Yellow
+	} else if kind == FocusApproval {
+		title, color = "DECISION", lipgloss.Yellow
+	}
+	return o.inputFrame(title, color, prompt, value, hint, width)
+}
+
+// UserMessage is a durable transcript box, with no editor hint or background.
+func (o Output) UserMessage(value string, width int) []string {
+	return o.inputFrame("YOU", lipgloss.BrightBlack, "", value, "", width).Rows
+}
+
+func (o Output) inputFrame(title string, color color.Color, prompt, value, hint string, width int) FocusFrame {
+	if width <= 0 {
+		width = o.cap.Width
+	}
+	width = max(12, width)
+	inner := max(1, width-4)
+	textRows := strings.Split(ansi.Hardwrap(prompt+value, inner, true), "\n")
+	if len(textRows) == 0 {
+		textRows = []string{""}
+	}
+	topLabel := "─ " + title + " "
+	top := "╭" + topLabel + strings.Repeat("─", max(0, width-2-lipgloss.Width(topLabel))) + "╮"
+	rows := []string{top}
+	for _, row := range textRows {
+		content := lipgloss.NewStyle().Width(inner).Render(row)
+		if o.cap.Color {
+			border := lipgloss.NewStyle().Foreground(color)
+			rows = append(rows, border.Render("│")+" "+content+" "+border.Render("│"))
+		} else {
+			rows = append(rows, "│ "+content+" │")
+		}
+	}
+	cursorRow := len(rows) - 1
+	cursorColumn := 2 + lipgloss.Width(textRows[len(textRows)-1])
+	if hint != "" {
+		hint = ansi.Truncate(hint, inner, strings.Repeat(".", min(3, inner)))
+		content := lipgloss.NewStyle().Foreground(lipgloss.BrightBlack).Width(inner).Render(hint)
+		if o.cap.Color {
+			border := lipgloss.NewStyle().Foreground(color)
+			rows = append(rows, border.Render("│")+" "+content+" "+border.Render("│"))
+		} else {
+			rows = append(rows, "│ "+content+" │")
+		}
+	}
+	rows = append(rows, "╰"+strings.Repeat("─", width-2)+"╯")
+	if o.cap.Color {
+		border := lipgloss.NewStyle().Foreground(color)
+		rows[0] = border.Render(rows[0])
+		rows[len(rows)-1] = border.Render(rows[len(rows)-1])
+	}
+	return FocusFrame{Rows: rows, CursorRow: cursorRow, CursorColumn: cursorColumn}
 }

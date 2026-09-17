@@ -13,7 +13,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/kaimahi-agents/kaimahi/internal/kmx/cliui"
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
 
 func chatPTY(t *testing.T, width int) (*os.File, *os.File) {
@@ -125,6 +127,7 @@ func TestChatPTYRawInput(t *testing.T) {
 		{name: "wrapped delete", keys: "abcdefghijklmnop\x7f\x7f\r", want: "abcdefghijklmn", width: 10},
 		{name: "shrink wrapped input", keys: "abcdefghijklmnop" + strings.Repeat("\x7f", 16) + "x\r", want: "x", width: 10},
 		{name: "hint submit", keys: "/hi\t\r", want: "/history", width: 10},
+		{name: "transient backend hint", keys: "hello\r", want: "hello", width: 40},
 		{name: "tiny hint", keys: "/\x7fx\r", want: "x", width: 3},
 		{name: "grapheme delete", keys: "e\u0301👩‍💻\x7f\x7fx\r", want: "x", width: 12},
 		{name: "malformed utf8", keys: "\xc3x\r", want: "x", width: 12},
@@ -175,6 +178,10 @@ func TestChatPTYRawInput(t *testing.T) {
 			}()
 			t.Cleanup(func() { close(stop) })
 			r := &chatRenderer{out: slave, cursor: true}
+			if tc.name == "transient backend hint" {
+				r.ui = cliui.WithCapabilities(cliui.Capabilities{Rich: true, Color: false, Width: tc.width})
+				r.promptHint = "/help  /retry  /exit"
+			}
 			if tc.prompt != "" {
 				r.operationPrompt("NATIVE", colorYellow, "payload", tc.prompt)
 			} else {
@@ -254,6 +261,9 @@ func TestChatPTYRawInput(t *testing.T) {
 				prefix = "  " + tc.prompt + " "
 			}
 			wantRows := chatInputRows(prefix, tc.want, tc.width)
+			if tc.name == "transient backend hint" {
+				wantRows = r.ui.UserMessage(tc.want, tc.width-1)
+			}
 			for index := range wantRows {
 				wantRows[index] = strings.TrimRight(wantRows[index], " ")
 			}
@@ -262,6 +272,9 @@ func TestChatPTYRawInput(t *testing.T) {
 			}
 			if (tc.name == "long user submission" || tc.name == "wrapped delete") && strings.Count(screen, "YOU >") != 1 {
 				t.Fatalf("submission duplicated prompt/input: %s", screen)
+			}
+			if tc.name == "transient backend hint" && strings.Contains(screen, "/help  /retry  /exit") {
+				t.Fatalf("transient slash hints remained under submitted input: %s", screen)
 			}
 			if tc.prompt != "" && strings.Contains(screen, "YOU >") {
 				t.Fatalf("native prompt replaced: %s", screen)
@@ -331,6 +344,11 @@ func TestChatPTYResizeAbortsWithoutStaleRedraw(t *testing.T) {
 				for !ready(captured.String()) {
 					fds := []unix.PollFd{{Fd: int32(master.Fd()), Events: unix.POLLIN}}
 					n, err := unix.Poll(fds, 20)
+					// Signals (including Go runtime preemption) can interrupt poll
+					// without a terminal failure. Retry within the original deadline.
+					if err == unix.EINTR && time.Now().Before(deadline) {
+						continue
+					}
 					if err != nil || time.Now().After(deadline) {
 						t.Fatalf("PTY output timeout: %v %q", err, captured.String())
 					}
@@ -339,6 +357,9 @@ func TestChatPTYResizeAbortsWithoutStaleRedraw(t *testing.T) {
 					}
 					var buf [8192]byte
 					n, err = unix.Read(int(master.Fd()), buf[:])
+					if err == unix.EINTR {
+						continue
+					}
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -356,13 +377,23 @@ func TestChatPTYResizeAbortsWithoutStaleRedraw(t *testing.T) {
 			}
 			// Allow completed writes to drain before marking the resize boundary.
 			fds := []unix.PollFd{{Fd: int32(master.Fd()), Events: unix.POLLIN}}
+			deadline := time.Now().Add(2 * time.Second)
 			for {
-				n, _ := unix.Poll(fds, 20)
+				n, err := unix.Poll(fds, 20)
+				if err == unix.EINTR && time.Now().Before(deadline) {
+					continue
+				}
+				if err != nil || time.Now().After(deadline) {
+					t.Fatalf("PTY drain failed: %v %q", err, captured.String())
+				}
 				if n == 0 {
 					break
 				}
 				var buf [8192]byte
-				n, err := unix.Read(int(master.Fd()), buf[:])
+				n, err = unix.Read(int(master.Fd()), buf[:])
+				if err == unix.EINTR {
+					continue
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -397,6 +428,67 @@ func TestChatPTYResizeAbortsWithoutStaleRedraw(t *testing.T) {
 	}
 }
 
+func TestQuickstartChatHandoffWaitsForTerminalSizeToSettle(t *testing.T) {
+	_, slave := chatPTY(t, 80)
+	done := make(chan error, 1)
+	go func() { done <- waitForStableTerminalSize(slave, slave) }()
+	time.Sleep(30 * time.Millisecond)
+	if err := unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 28, Col: 90}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(180 * time.Millisecond)
+	if err := unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 30, Col: 100}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal handoff did not stabilize")
+	}
+	width, height, err := term.GetSize(int(slave.Fd()))
+	if err != nil || width != 100 || height != 30 {
+		t.Fatalf("stable dimensions=%dx%d err=%v", width, height, err)
+	}
+}
+
+func TestQuickstartChatHandoffDoesNotTripFirstRawPrompt(t *testing.T) {
+	master, slave := chatPTY(t, 80)
+	r := newChatRenderer(slave)
+	done := make(chan error, 1)
+	go func() {
+		if err := waitForStableTerminalSize(slave, slave); err != nil {
+			done <- err
+			return
+		}
+		r.prompt()
+		_, err := readSlashLine(context.Background(), slave, slave, r, false)
+		done <- err
+	}()
+	time.Sleep(40 * time.Millisecond)
+	if err := unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 28, Col: 90}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(180 * time.Millisecond)
+	if err := unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 30, Col: 100}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(350 * time.Millisecond)
+	if _, err := io.WriteString(master, "/exit\r"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("first prompt failed after handoff: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first prompt did not accept input after handoff")
+	}
+}
+
 func TestChatPTYSpinnerUsesRendererDestination(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("NO_COLOR", "")
@@ -408,6 +500,7 @@ printf '%s\n' '{"artifact":{"parts":[{"kind":"text","text":" second"}]}}'`)
 	var stderr bytes.Buffer
 	a := &App{Out: slave, Err: &stderr}
 	r := newChatRenderer(slave)
+	r.verbose = true
 	r.beginAssistant("agent")
 	if _, err := a.invokeStream(context.Background(), dir+"/kagent", "", "agent", "hello", "", "off", r, nil); err != nil {
 		t.Fatal(err)
@@ -437,7 +530,7 @@ printf '%s\n' '{"artifact":{"parts":[{"kind":"text","text":" second"}]}}'`)
 		t.Fatalf("spinner used stderr capabilities/destination: %q / %q", output, stderr.String())
 	}
 	screen := chatScreen(output, 20)
-	if strings.Contains(screen, "WORKING") || !strings.Contains(screen, "  | first second") {
+	if strings.Contains(screen, "WORKING") || !strings.Contains(screen, "  first second") || strings.Contains(screen, "  | ") {
 		t.Fatalf("spinner or chunks damaged screen:\n%s\nraw: %q", screen, output)
 	}
 	// A terminal stderr must never enable a spinner in a plain stdout transcript.
@@ -488,7 +581,7 @@ func TestChatPTYStaticCalloutPromptTransitions(t *testing.T) {
 				r.assistant("agent", "durable", true)
 				r.operationPrompt("NATIVE APPROVAL", colorYellow, "Call ID: exact\nTool: delete\nArguments:\n{\"name\":\"pod-a\"}", prompt)
 				var captured strings.Builder
-				chatPTYReadUntil(t, master, &captured, func(s string) bool { return strings.Contains(s, prompt) })
+				chatPTYReadUntil(t, master, &captured, func(s string) bool { return strings.Contains(s, "Arguments:") })
 				static := captured.String()
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
@@ -500,7 +593,8 @@ func TestChatPTYStaticCalloutPromptTransitions(t *testing.T) {
 					}
 					done <- err
 				}()
-				chatPTYReadUntil(t, master, &captured, func(s string) bool { return strings.Contains(s, "\x1b[2K") })
+				frameTitle := "DECISION"
+				chatPTYReadUntil(t, master, &captured, func(s string) bool { return strings.Contains(ansi.Strip(s), "─ "+frameTitle+" ") })
 				io.WriteString(master, "yes\r")
 				if err := <-done; err != nil {
 					t.Fatal(err)
@@ -511,10 +605,8 @@ func TestChatPTYStaticCalloutPromptTransitions(t *testing.T) {
 				io.WriteString(slave, "END\n")
 				chatPTYReadUntil(t, master, &captured, func(s string) bool { return strings.HasSuffix(s, "END\r\n") })
 				screen := chatScreen(captured.String(), width)
-				staticScreen := chatScreen(static, width)
-				borderEnd := strings.LastIndex(staticScreen, "╯")
-				if borderEnd < 0 || !strings.HasPrefix(screen, staticScreen[:borderEnd+len("╯")]) || !strings.Contains(screen, "resumed") || strings.Contains(captured.String()[len(static):], "╭") {
-					t.Fatalf("native editing damaged or repainted durable callout:\n%s", screen)
+				if !strings.Contains(ansi.Strip(static), "Call ID: exact") || !strings.Contains(screen, "resumed") || strings.Count(screen, "╭") != 0 {
+					t.Fatalf("native editing damaged passive details or left a focus border:\n%s", screen)
 				}
 				if strings.Contains(screen, "YOU >") || r.transient {
 					t.Fatalf("native prompt/progress state changed: %s", screen)
@@ -534,6 +626,7 @@ func TestChatPTYHelpAndExitDispatch(t *testing.T) {
 			t.Setenv("TERM", "xterm-256color")
 			t.Setenv("NO_COLOR", "")
 			a := chatUXFixture(t)
+			a.chatVerbose = true
 			master, slave := chatPTY(t, 100)
 			a.Out, a.Stdin = slave, slave
 			done := make(chan error, 1)
@@ -576,6 +669,7 @@ sleep 0.6
 printf '%s\n' '{"status":{"state":"completed"},"artifact":{"parts":[{"kind":"text","text":"finished"}]}}'`)
 			r := newChatRenderer(slave)
 			a := &App{Out: slave}
+			r.verbose = true
 			if _, err := a.invokeStream(context.Background(), dir+"/kagent", "", "agent", "hello", "", mode, r, nil); err != nil {
 				t.Fatal(err)
 			}
@@ -600,6 +694,7 @@ func TestChatPTYSpinnerResizeNeverErasesReflowedRows(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	master, slave := chatPTY(t, 80)
 	r := newChatRenderer(slave)
+	r.verbose = true
 	r.block("HISTORY", colorBlue, "durable")
 	r.spinner("agent", "|", time.Second)
 	var captured strings.Builder
@@ -643,5 +738,59 @@ func TestChatPTYNoColorKeepsScannerTranscript(t *testing.T) {
 	text := captured.String()
 	if !strings.HasPrefix(text, "CHAT STATUS\r\n------------\r\n  Agent: agent") || !strings.Contains(text, "[CHAT HELP]") || !strings.Contains(text, "Status: ended") || strings.Contains(text, "\x1b") || strings.Contains(text, "WORKING") {
 		t.Fatalf("NO_COLOR scanner transcript changed: %q", text)
+	}
+}
+
+func TestChatPTYConversationIsATopToBottomTimeline(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("NO_COLOR", "")
+	for _, width := range []int{24, 100} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			master, slave := chatPTY(t, width)
+			r := newChatRenderer(slave)
+			var captured strings.Builder
+			for turn, message := range []string{"first message", "second message"} {
+				boundary := captured.Len()
+				r.prompt()
+				done := make(chan error, 1)
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				go func() {
+					line, err := readSlashLine(ctx, slave, slave, r, false)
+					if err == nil && line != message {
+						err = fmt.Errorf("message changed: %q", line)
+					}
+					done <- err
+				}()
+				chatPTYReadUntil(t, master, &captured, func(s string) bool {
+					return strings.Contains(s[boundary:], "─ MESSAGE ")
+				})
+				if _, err := io.WriteString(master, message+"\r"); err != nil {
+					t.Fatal(err)
+				}
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+				r.assistant("agent", fmt.Sprintf("reply %d", turn+1), true)
+				r.responseTime(time.Duration(turn+2) * time.Second)
+				r.finish()
+				io.WriteString(slave, fmt.Sprintf("TURN %d\n", turn))
+				chatPTYReadUntil(t, master, &captured, func(s string) bool { return strings.HasSuffix(s, fmt.Sprintf("TURN %d\r\n", turn)) })
+			}
+			io.WriteString(slave, "END\n")
+			chatPTYReadUntil(t, master, &captured, func(s string) bool { return strings.HasSuffix(s, "END\r\n") })
+			screen := chatScreen(captured.String(), width)
+			if strings.Count(screen, "╭─ YOU ") != 2 || strings.Count(screen, "╰") != 2 || strings.Contains(screen, "MESSAGE") || strings.Contains(screen, "  | ") {
+				t.Fatalf("user boxes/agent background are inconsistent:\n%s", screen)
+			}
+			previous := -1
+			for _, want := range []string{"first message", "reply 1", "Responded in 2s", "second message", "reply 2", "Responded in 3s", "END"} {
+				index := strings.Index(screen, want)
+				if index <= previous {
+					t.Fatalf("missing or reordered %q:\n%s", want, screen)
+				}
+				previous = index
+			}
+		})
 	}
 }

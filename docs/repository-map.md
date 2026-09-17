@@ -11,7 +11,7 @@ records. This map describes tracked files, packaging and actual callers, not
 an endorsement of every retained legacy installation path.
 
 - **Installed / checkout** describes reachability. `embed.go` names what travels
-  inside kmx, including five shell scripts. Embedding is not a support guarantee.
+  inside kmx, including five shell scripts and one Python tool server. Embedding is not a support guarantee.
 - **Scaffolding** describes build, test, CI and synthetic model fixtures.
 - The gateway, inbound/notification runtime, tool workflows and their ERP/connector
   demonstrations have been removed. Custom approvals and grants are retired;
@@ -33,8 +33,8 @@ checks.
 | `internal/` | `kmx/` (15 packages), plus embedded schema fixtures | — | — |
 | `plane/` | model bridge and ordinary budget administration | — | test fakes inside packages |
 | `k8s/` | embedded model/plane/observability and retained kagent artifacts | — | — |
-| `scripts/` | 7 (5 embedded in the binary, 2 operator) | 1 | 42 (checkers, probes, CI fixtures, mutation specs) |
-| `docs/` | 37 tracked files; guides, direction, retirement records and assets | historical scenario records | maintainer and process docs |
+| `scripts/` | 8 (6 embedded in the binary, 2 operator) | 1 | 43 (checkers, probes, CI fixtures, mutation specs) |
+| `docs/` | 45 tracked files; guides, direction, retirement records and assets | historical scenario records | maintainer and process docs |
 | `brand/` | 6 assets used by the README and the org profile | — | its own checker |
 
 ## `cmd/` — installed CLI
@@ -47,13 +47,13 @@ checks.
 
 `internal/kmx/` is fifteen packages. Cluster-independent decisions live in
 packages; shell-out orchestration lives in `app`. `lift` holds cloud-independent
-rules, while the five `lift*.go` files in `app` run the cloud side. Counts exclude
+rules, while the seven `lift*.go` files in `app` run cloud orchestration, preferences and reuse checks. Interactive lift panes use `chat_lift*.go`. Counts exclude
 Go test files but include non-Go data; versioned fixtures are not additional Go
 packages.
 
 | Package or data directory | Non-test files | Class | What it is |
 |---|---|---|---|
-| `kmx/app` | 41 | Installed | Command orchestration, model/cluster operations, native Orka create/readiness/Task-result handling and retained kagent editing/chat. |
+| `kmx/app` | 70 | Installed | Command orchestration, model/cluster operations, shared interactive chat UI, native Orka create/readiness/Task-result handling and retained kagent operations. |
 | `kmx/admin` | 6 | Installed | Model-plane admin client, ordinary caps, credentials and model ledger views. |
 | `kmx/scaffold` | 8 | Installed | Orka authoring, model/migration artifacts, retained kagent checks and shared YAML/name helpers. |
 | `kmx/orkaschema` | 3 | Installed | Structural schema validator, attribution and upstream licence. |
@@ -174,9 +174,9 @@ old resources or safely choose replacement tool routing for their owners.
 
 ## `k8s/` — embedded artifacts
 
-Twenty-four of `k8s/`'s 24 files are embedded; zero are not embedded.
+Twenty-five of `k8s/`'s 25 files are embedded; zero are not embedded.
 
-**Embedded in `kmx` (24):** `ollama.yaml`, `kagent-values.yaml`,
+**Embedded in `kmx` (25):** `ollama.yaml`, `kagent-values.yaml`, `orka-k8s-tool.yaml`,
 `hello-world.yaml`, `tools-agent.yaml`, `egress-hosted.yaml`, `egress-copilot.yaml`,
 all five of `plane/`, all nine of `models/`, and all four of `observability/`.
 
@@ -186,19 +186,19 @@ The retained tools agent uses the direct kagent tool server. Keeping its existin
 installation/authoring path does not restore the removed Kaimahi MCP gateway.
 Model and observability manifests remain part of clone-free deployment.
 
-## `scripts/` — 50 tracked files, three different jobs
+## `scripts/` — 52 tracked files, three different jobs
 
-**Reference coverage:** 38 of the 50 are named by something outside themselves,
+**Reference coverage:** 40 of the 52 are named by something outside themselves,
 and the twelve `scripts/mutations/*.json` are named by nothing at all — the
 mutation harness discovers them by glob. Map/checker/board mentions are not
 caller evidence. Textual references are not necessarily invocations.
 
 | Class | Count | Files |
 |---|---|---|
-| **Installed** — embedded in kmx | 5 | `aks-up.sh`, `aks-down.sh`, `plane-deploy.sh`, `netpol-probe.sh`, `kube-guard.sh` |
+| **Installed** — embedded in kmx | 6 | `aks-up.sh`, `aks-down.sh`, `plane-deploy.sh`, `netpol-probe.sh`, `kube-guard.sh`, `orka-k8s-tool.py` |
 | **Checkout** — operator scripts | 2 | `plane-pods.sh`, `copilot-secret.sh` |
 | **Demonstration** | 1 | `demo-hello-to-governed.sh` |
-| **Scaffolding** — checkers and self-tests | 18 | the twelve `check-*` files, `kube-guard-test.sh`, `release-notes.py`, `verify-chat.py`, `test_check_board.py`, `test_model_fixtures.py`, `test_demo_hello_to_governed.py` |
+| **Scaffolding** — checkers and self-tests | 19 | the twelve `check-*` files, `kube-guard-test.sh`, `release-notes.py`, `verify-chat.py`, `test_check_board.py`, `test_model_fixtures.py`, `test_demo_hello_to_governed.py`, `test_orka_k8s_tool.py` |
 | **Scaffolding** — live-cluster probes | 7 | `*-probe.sh`, minus the embedded one, plus `seam-tls.sh` |
 | **Scaffolding** — CI fixtures | 4 | `scripts/ci/`: `plain-model.sh`, `plain-model-server.py`, `synthetic-model.sh`, `status-unknown-probe.sh` |
 | **Scaffolding** — mutation specifications | 12 | `scripts/mutations/*.json` |
@@ -217,13 +217,14 @@ line rather than a recipe. Its existing callers include
 are comments). Existing agent tool-call verification concerns the retained
 direct kagent path, not a removed gateway assertion.
 
-## `docs/` — 37 tracked files, guides and retirement records
+## `docs/` — 45 tracked files, guides and retirement records
 
-**Guides and index (19):** `README.md`, `getting-started.md`, `kmx.md`,
+**Guides and index (23):** `README.md`, `getting-started.md`, `kmx.md`,
 `aks.md`, `models.md`, `tools.md`, `spend.md`, `tool-governance.md`,
 `approvals.md`, `egress.md`, `hosted-upstreams.md`, `identity.md`,
 `operations.md`, `releases.md`, `workflows.md`, `FAQ.md`, `isolation.md`,
-`migrate.md` and `orka.md`. Retired tool/workflow pages are pointers, not
+`migrate.md`, `orka.md`, `copilot-inference.md`, `interactive-chat.md`,
+`interactive-lift.md` and `orka-k8s-tool.md`. Retired tool/workflow pages are pointers, not
 operating instructions for deleted code.
 
 **Retired scenario/integration records (6):** `inbound.md`, `slack.md`,
@@ -231,10 +232,12 @@ operating instructions for deleted code.
 
 **Demonstration reference (1):** `demo.md` (the hello-to-governed model journey and other demo paths).
 
-**Maintainer and process (9):** `development.md`, `repository-map.md`,
+**Maintainer and process (13):** `development.md`, `repository-map.md`,
 `COORDINATION.md`, `reviews/2026-09-09-orka-composition.md`,
 `reviews/2026-09-10-substrate-evaluation.md`, `entry-point-principles.md`,
-`cli-ux-plan.md`, `charm-ux-followup-plan.md` and `NAMING.md`.
+`cli-ux-plan.md`, `charm-ux-followup-plan.md`, `NAMING.md`,
+`azure-discovery-performance.md`, `copilot-performance.md`, `orka-latency.md`
+and `orka-startup-performance.md`.
 
 **Assets (2):** `docs/assets/architecture.mmd` and `docs/assets/architecture.svg`.
 These depict the pre-retirement platform, not the current model bridge. The

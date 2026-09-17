@@ -235,7 +235,7 @@ func TestChatStatusHeaderIsUncoloredAndSeparated(t *testing.T) {
 
 	wantHeader := "CHAT STATUS\n------------\n" +
 		"  Agent: hello-tools\n" +
-		"  Commands: /exit /govern /help /history /new /resume <id> /retry /session /sessions /tools off|summary|verbose /ungovern\n" +
+		"  Commands: /exit /govern /help /history /new /resume <id> /retry /session /sessions /tools off|summary|verbose /ungovern /verbose-on /verbose-off\n" +
 		"  Model\n" +
 		"    Name: hello-world-model\n" +
 		"    Posture: direct\n" +

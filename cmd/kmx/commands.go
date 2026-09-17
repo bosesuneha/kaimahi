@@ -51,6 +51,28 @@ func newQuickstartCommand(state *commandState) *cobra.Command {
 	return cmd
 }
 
+func newQuickstartWizardCommand(state *commandState) *cobra.Command {
+	var opt app.QuickstartWizardOptions
+	cmd := &cobra.Command{
+		Use:   "quickstart-wizard",
+		Short: "Create your first Orka agent while its local runtime starts",
+		Args:  cobra.NoArgs,
+	}
+	cmd.Flags().StringVar(&opt.Create.Instructions, "instructions", "", "file containing the system message")
+	cmd.Flags().StringVar(&opt.Create.Tools, "tools", "", "comma-separated Orka tool names (default: k8s-get-resources)")
+	cmd.Flags().StringVar(&opt.Create.Skills, "skills", "", "comma-separated explicit Orka skill names")
+	cmd.Flags().StringVar(&opt.Create.Task, "task", "", "optional first Orka Task prompt")
+	cmd.Flags().StringVar(&opt.Create.ResultServiceAccount, "result-service-account", "", "existing ServiceAccount for Task result access")
+	cmd.Flags().StringVar(&opt.Create.Out, "out", "", "manifest output path")
+	cmd.Flags().BoolVar(&opt.Verbose, "verbose", false, "show chat WORKING and TIMING details")
+	cmd.Flags().StringVar(&opt.AzureDiscovery, "azure-discovery", "cli", "AKS cluster listing: cli or sdk (DefaultAzureCredential)")
+	_ = cmd.RegisterFlagCompletionFunc("azure-discovery", staticCompletion([]string{"cli", "sdk"}))
+	cmd.Flags().StringVar(&opt.Inference, "inference", "auto", "legacy discovery hint; wizard always requires an explicit source/model selection")
+	_ = cmd.RegisterFlagCompletionFunc("inference", staticCompletion([]string{"auto", "copilot", "local"}))
+	cmd.RunE = appRun(state, func(a *app.App) error { return a.QuickstartWizard(opt) })
+	return cmd
+}
+
 func newUpCommand(state *commandState) *cobra.Command {
 	var step string
 	cmd := &cobra.Command{Use: "up", Short: "Bring up the local runtime", Args: cobra.NoArgs}

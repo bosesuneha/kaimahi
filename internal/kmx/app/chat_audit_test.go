@@ -21,7 +21,7 @@ import (
 
 func TestChatTransientClearPreservesDurableResponse(t *testing.T) {
 	var out bytes.Buffer
-	r := &chatRenderer{out: &out, cursor: true}
+	r := &chatRenderer{out: &out, cursor: true, verbose: true}
 	r.beginAssistant("agent")
 	r.spinner("agent", "|", time.Second)
 	r.spinner("agent", "/", 2*time.Second)
@@ -201,7 +201,7 @@ func TestChatWorkingFeedbackLifecycle(t *testing.T) {
 	for _, rich := range []bool{false, true} {
 		for _, ending := range []string{"completed", "invalid"} {
 			var out bytes.Buffer
-			r := &chatRenderer{out: &out, ui: cliui.WithCapabilities(cliui.Capabilities{Rich: rich, Width: 80})}
+			r := &chatRenderer{out: &out, verbose: true, ui: cliui.WithCapabilities(cliui.Capabilities{Rich: rich, Width: 80})}
 			r.working("Connecting")
 			r.working("Checking posture")
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -227,7 +227,7 @@ func TestChatSpinnerPausesAtTerminalAndApprovalEvents(t *testing.T) {
 	for _, state := range []string{"completed", "failed", "canceled", "rejected", "input-required", "final", "approval"} {
 		t.Run(state, func(t *testing.T) {
 			var out bytes.Buffer
-			r := &chatRenderer{out: &out, cursor: true}
+			r := &chatRenderer{out: &out, cursor: true, verbose: true}
 			view := newStreamView("agent", "summary", r, nil)
 			r.assistant("agent", "durable", true)
 			view.consumeTool("function_call", false, json.RawMessage(`{"id":"one","name":"read","args":{}}`), &out)

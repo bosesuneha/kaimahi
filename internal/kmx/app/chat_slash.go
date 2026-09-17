@@ -12,6 +12,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/kaimahi-agents/kaimahi/internal/kmx/cliui"
 	"github.com/muesli/cancelreader"
 	"github.com/rivo/uniseg"
 	"golang.org/x/term"
@@ -20,6 +21,60 @@ import (
 type slashCommand struct {
 	name  string
 	usage string
+}
+
+var orkaSlashCommands = []slashCommand{
+	{"/agent", "/agent — switch agent"},
+	{"/exit", "/exit — leave chat"},
+	{"/help", "/help — available commands"},
+	{"/inference-copilot", "/inference-copilot — choose Copilot model"},
+	{"/inference-local", "/inference-local — use Agent Provider"},
+	{"/lift", "/lift — deploy to another cluster"},
+	{"/retry", "/retry — repeat last message"},
+	{"/tools", "/tools — enable agent tools"},
+	{"/verbose-off", "/verbose-off — hide details"},
+	{"/verbose-on", "/verbose-on — show details"},
+}
+
+func slashMatchesFrom(commands []slashCommand, line string) []slashCommand {
+	if commands == nil {
+		return slashMatches(line)
+	}
+	if !strings.HasPrefix(line, "/") || strings.ContainsAny(line, " \t\n") {
+		return nil
+	}
+	var matches []slashCommand
+	for _, command := range commands {
+		if strings.HasPrefix(command.name, line) {
+			matches = append(matches, command)
+		}
+	}
+	return matches
+}
+
+func slashPopup(matches []slashCommand, selected, width, maxRows int) []string {
+	if len(matches) == 0 || maxRows < 3 || width < 16 {
+		return nil
+	}
+	width = min(width, 64)
+	inner := width - 4
+	count := min(6, maxRows-2, len(matches))
+	start := max(0, min(selected-count+1, len(matches)-count))
+	border := lipgloss.NewStyle().Foreground(lipgloss.Blue)
+	rows := []string{border.Render("╭" + strings.Repeat("─", width-2) + "╮")}
+	for i := start; i < start+count; i++ {
+		prefix := "  "
+		if i == selected {
+			prefix = "› "
+		}
+		row := ansi.Truncate(prefix+matches[i].usage, inner, "…")
+		row += strings.Repeat(" ", max(0, inner-lipgloss.Width(row)))
+		if i == selected {
+			row = pickerSelectedStyle().Render(row)
+		}
+		rows = append(rows, border.Render("│")+" "+row+" "+border.Render("│"))
+	}
+	return append(rows, border.Render("╰"+strings.Repeat("─", width-2)+"╯"))
 }
 
 var slashCommandList = []slashCommand{
@@ -34,6 +89,8 @@ var slashCommandList = []slashCommand{
 	{"/sessions", "/sessions"},
 	{"/tools", "/tools off|summary|verbose"},
 	{"/ungovern", "/ungovern"},
+	{"/verbose-on", "/verbose-on"},
+	{"/verbose-off", "/verbose-off"},
 }
 
 type slashTrie struct {
@@ -93,7 +150,7 @@ func slashCommandReference() string {
 			switch command.name {
 			case "/new", "/resume", "/session", "/sessions", "/history":
 				category = "Session"
-			case "/tools":
+			case "/tools", "/verbose-on", "/verbose-off":
 				category = "Display"
 			case "/govern", "/ungovern":
 				category = "Governance"
@@ -182,6 +239,48 @@ func (i *chatInput) readLine(ctx context.Context, hints bool) (string, error) {
 var errTerminalUnavailable = fmt.Errorf("terminal raw mode unavailable")
 var errChatResized = fmt.Errorf("terminal resized; chat stopped without submitting the current input or approval; restart chat to continue")
 
+func waitForStableTerminalSize(in *os.File, out io.Writer) error {
+	return waitForStableTerminalSizeContext(context.Background(), in, out)
+}
+
+func waitForStableTerminalSizeContext(ctx context.Context, in *os.File, out io.Writer) error {
+	outFile, ok := out.(*os.File)
+	if in == nil || !ok || !term.IsTerminal(int(in.Fd())) || !term.IsTerminal(int(outFile.Fd())) {
+		return nil
+	}
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(25 * time.Millisecond)
+	defer poll.Stop()
+	lastWidth, lastHeight := 0, 0
+	stableSince := time.Time{}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		width, height, err := term.GetSize(int(outFile.Fd()))
+		if err == nil && width > 0 && height > 0 {
+			if width == lastWidth && height == lastHeight {
+				if !stableSince.IsZero() && time.Since(stableSince) >= 250*time.Millisecond {
+					return nil
+				}
+			} else {
+				lastWidth, lastHeight, stableSince = width, height, time.Now()
+			}
+		} else {
+			stableSince = time.Time{}
+			lastWidth, lastHeight = 0, 0
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("terminal dimensions did not stabilize after entering chat; chat was not started")
+		case <-poll.C:
+		}
+	}
+}
+
 // Explicit row breaks avoid terminal-dependent pending-wrap cursor positions.
 func chatInputRows(prompt, line string, width int) []string {
 	width = max(1, width)
@@ -224,9 +323,17 @@ func readSlashLine(ctx context.Context, in, out *os.File, renderer *chatRenderer
 		height = 24
 	}
 	resized := false
+	var reflow func(int, int)
 	checkResize := func() bool {
 		w, h, err := term.GetSize(int(out.Fd()))
-		resized = resized || (err == nil && (w != initialWidth || h != initialHeight))
+		if err == nil && w > 0 && h > 0 && (w != initialWidth || h != initialHeight) {
+			initialWidth, initialHeight = w, h
+			if reflow != nil {
+				reflow(w, h)
+			} else {
+				resized = true
+			}
+		}
 		return resized
 	}
 	resizePoll := time.NewTicker(50 * time.Millisecond)
@@ -253,6 +360,7 @@ func readSlashLine(ctx context.Context, in, out *os.File, renderer *chatRenderer
 		<-stopped
 	}()
 	pending := false
+	var repaint func()
 	nextByte := func(deadline time.Time) (byte, error) {
 		if !pending {
 			requests <- struct{}{}
@@ -272,6 +380,9 @@ func readSlashLine(ctx context.Context, in, out *os.File, renderer *chatRenderer
 			case <-ctx.Done():
 				return 0, ctx.Err()
 			case <-resizePoll.C:
+				if repaint != nil {
+					repaint()
+				}
 				continue
 			case <-timeout:
 				return 0, context.DeadlineExceeded
@@ -284,26 +395,73 @@ func readSlashLine(ctx context.Context, in, out *os.File, renderer *chatRenderer
 	line := ""
 	var utf8Bytes []byte
 	renderer.mu.Lock()
+	height = max(1, height-renderer.headerRows)
 	prompt := strings.Repeat(" ", renderer.promptIndent) + renderer.promptText
+	promptKind := renderer.promptKind
+	promptHint := renderer.promptHint
+	commands := renderer.slashCommands
+	framed := renderer.cursor && renderer.ui.Rich() && height > 5 && width >= 16
 	renderer.mu.Unlock()
-	initialRows := chatInputRows(prompt, "", width)
-	cursorRow := len(initialRows) - 1
-	if initialRows[cursorRow] == "" && cursorRow > 0 {
-		cursorRow-- // The already printed prompt still has a pending wrap.
+	selected, navigated := 0, false
+	popupQuery := ""
+	matchesForInput := func() []slashCommand {
+		if !hints {
+			return nil
+		}
+		return slashMatchesFrom(commands, line)
 	}
-	paintedRows := cursorRow + 1
+	cursorRow, paintedRows := 0, 0
+	if !framed {
+		initialRows := chatInputRows(prompt, "", width)
+		cursorRow = len(initialRows) - 1
+		if initialRows[cursorRow] == "" && cursorRow > 0 {
+			cursorRow-- // The already printed prompt still has a pending wrap.
+		}
+		paintedRows = cursorRow + 1
+	}
+	reflowPending := false
+	if renderer.alternateScreen {
+		reflow = func(w, h int) {
+			width, height = w, h
+			renderer.mu.Lock()
+			// Terminal reflow invalidates every old editor coordinate. Preserve
+			// existing transcript rows and anchor a fresh editor at the bottom.
+			renderer.transient = false
+			renderer.spinnerDisabled = false
+			fmt.Fprint(out, "\x1b[r")
+			renderer.headerRows = 0
+			renderer.drawStickyHeaderLocked()
+			height = max(1, h-renderer.headerRows)
+			fmt.Fprintf(out, "\x1b[%d;1H\r\n", h)
+			framed = renderer.cursor && renderer.ui.Rich() && height > 5 && width >= 16
+			renderer.mu.Unlock()
+			cursorRow, paintedRows = 0, 0
+			reflowPending = true
+		}
+	}
 	redraw := func(showHint, complete bool) {
 		if checkResize() {
 			return
 		}
 		var matches []slashCommand
 		if hints && showHint {
-			matches = slashMatches(line)
+			matches = matchesForInput()
 		}
-		hint := fitSlashHint(slashHint(matches), width)
+		if line != popupQuery {
+			selected, navigated = 0, false
+			popupQuery = line
+		}
+		hint := promptHint
+		if hints {
+			hint = slashHint(matches)
+		}
+		hint = fitSlashHint(hint, width)
 		renderer.mu.Lock()
 		defer renderer.mu.Unlock()
 		fmt.Fprint(out, "\r")
+		if paintedRows == 0 {
+			fmt.Fprint(out, "\033[2K")
+		}
 		if cursorRow > 0 {
 			fmt.Fprintf(out, "\033[%dA", cursorRow)
 		}
@@ -317,6 +475,20 @@ func readSlashLine(ctx context.Context, in, out *os.File, renderer *chatRenderer
 			fmt.Fprintf(out, "\033[%dA", paintedRows-1)
 		}
 		rows := chatInputRows(prompt, line, width)
+		frameCursorColumn := 0
+		if framed && !complete {
+			if len(matches) > 0 {
+				hint = ""
+			}
+			frame := renderer.ui.FocusInput(promptKind, prompt, line, safeTerminal(hint), width-1)
+			rows, frameCursorColumn = frame.Rows, frame.CursorColumn
+			cursorRow = frame.CursorRow
+			popup := slashPopup(matches, selected, width-1, height-1-len(rows))
+			if len(popup) > 0 {
+				rows = append(popup, rows...)
+				cursorRow += len(popup)
+			}
+		}
 		if complete {
 			// Submission is a durable transcript, not an editing viewport. Keep
 			// every sanitized grapheme, even on terminals narrower than one glyph.
@@ -324,6 +496,10 @@ func readSlashLine(ctx context.Context, in, out *os.File, renderer *chatRenderer
 			if lipgloss.Width(rows[len(rows)-1]) == width {
 				rows = append(rows, "")
 			}
+			if framed && promptKind == cliui.FocusMessage && strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "/") {
+				rows = renderer.ui.UserMessage(safeTerminal(line), width-1)
+			}
+			hint = ""
 		}
 		// Keep editing bounded to the visible screen, even for a large paste.
 		visible := max(1, height-1)
@@ -336,15 +512,34 @@ func readSlashLine(ctx context.Context, in, out *os.File, renderer *chatRenderer
 			} else {
 				rows = []string{marker}
 			}
+			cursorRow = min(cursorRow, len(rows)-1)
 		}
 		fmt.Fprint(out, "\r", strings.Join(rows, "\r\n"))
-		cursorRow, paintedRows = len(rows)-1, len(rows)
+		paintedRows = len(rows)
+		if framed && !complete {
+			if up := len(rows) - 1 - cursorRow; up > 0 {
+				fmt.Fprintf(out, "\033[%dA", up)
+			}
+			fmt.Fprint(out, "\r")
+			if frameCursorColumn > 0 {
+				fmt.Fprintf(out, "\033[%dC", frameCursorColumn)
+			}
+			return
+		}
+		cursorRow = len(rows) - 1
 		if hint != "" && height > len(rows) {
 			fmt.Fprint(out, "\r\n\033[2K  ", safeTerminal(hint), "\033[1A\r")
 			if column := lipgloss.Width(rows[len(rows)-1]); column > 0 {
 				fmt.Fprintf(out, "\033[%dC", column)
 			}
 			paintedRows++
+		}
+	}
+	repaint = func() {
+		checkResize()
+		if reflowPending {
+			reflowPending = false
+			redraw(true, false)
 		}
 	}
 	redraw(true, false)
@@ -395,6 +590,15 @@ func readSlashLine(ctx context.Context, in, out *os.File, renderer *chatRenderer
 				continue
 			}
 			if previous == 2 && key >= 0x20 && key <= 0x7e {
+				if matches := matchesForInput(); framed && len(matches) > 0 && (key == 'A' || key == 'B') {
+					if key == 'A' {
+						selected = (selected + len(matches) - 1) % len(matches)
+					} else {
+						selected = (selected + 1) % len(matches)
+					}
+					navigated = true
+					redraw(true, false)
+				}
 				if key < 0x40 {
 					escapeState, escapeDeadline = 2, time.Now().Add(100*time.Millisecond)
 				}
@@ -406,6 +610,11 @@ func readSlashLine(ctx context.Context, in, out *os.File, renderer *chatRenderer
 		}
 		switch key {
 		case '\r', '\n':
+			if matches := matchesForInput(); framed && len(matches) > 0 && (navigated || line != matches[selected].name) {
+				line = matches[selected].name
+				redraw(true, false)
+				continue
+			}
 			return line, nil
 		case 4:
 			if line == "" {
@@ -423,7 +632,12 @@ func readSlashLine(ctx context.Context, in, out *os.File, renderer *chatRenderer
 			}
 		case '\t':
 			if hints {
-				line = completeSlash(line, slashMatches(line))
+				matches := matchesForInput()
+				if framed && len(matches) > 0 {
+					line = matches[selected].name
+				} else {
+					line = completeSlash(line, matches)
+				}
 			}
 			redraw(true, false)
 		default:

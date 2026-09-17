@@ -34,7 +34,7 @@ var (
 	failureStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Red)
 	headingStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Cyan)
 	warningStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Yellow)
-	accentStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Magenta)
+	accentStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Cyan)
 	mutedStyle   = lipgloss.NewStyle().Foreground(lipgloss.BrightBlack)
 	infoStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Blue)
 )

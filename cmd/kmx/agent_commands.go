@@ -52,7 +52,7 @@ Select explicitly the namespace the Orka controller watches. Provider type, mode
 identifier (not a ModelConfig), and a separately provisioned Secret are required.
 This command does not build or deploy application images. Keep your Deployment
 or chart; use kmx migrate for an existing application's model seam.
-Existing agent chat/edit/list commands remain kagent-specific.
+Interactive agent chat supports Orka and kagent; edit/list remain kagent-specific.
 
 Offline output uses pinned v0.1.3 CRDs (main selects an immutable snapshot), not
 cluster admission. Never bulk-apply the bundle or write its value-free Secret
@@ -111,12 +111,18 @@ func newAgentEditCommand(state *commandState) *cobra.Command {
 }
 
 func newAgentChatCommand(state *commandState) *cobra.Command {
-	var asJSON, interactive bool
-	var session string
+	var asJSON, interactive, verbose bool
+	var session, runtime, namespace, azureDiscovery string
 	cmd := &cobra.Command{Use: "chat <name> [message...]", Short: "Chat with an Agent", Args: usageArgs(1, -1, "kmx agent chat [--json] [--interactive] [--session <id>] <name> [message]")}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print raw A2A task")
-	cmd.Flags().BoolVar(&interactive, "interactive", false, "keep one streamed session open")
+	cmd.Flags().BoolVar(&interactive, "interactive", false, "open the shared Orka chat TUI or a kagent streamed session")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "show chat WORKING and TIMING details")
 	cmd.Flags().StringVar(&session, "session", "", "resume this kagent session")
+	cmd.Flags().StringVar(&runtime, "runtime", "auto", "agent runtime: auto (prefer matching Orka Agent), orka, kagent")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "Agent namespace (default: orka-system for Orka, kagent for kagent)")
+	cmd.Flags().StringVar(&azureDiscovery, "azure-discovery", "cli", "AKS listing for /lift: cli or sdk")
+	_ = cmd.RegisterFlagCompletionFunc("runtime", staticCompletion([]string{"auto", "orka", "kagent"}))
+	_ = cmd.RegisterFlagCompletionFunc("azure-discovery", staticCompletion([]string{"cli", "sdk"}))
 	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
 		if interactive && asJSON {
 			return fmt.Errorf("--interactive and --json cannot be used together")
@@ -127,7 +133,7 @@ func newAgentChatCommand(state *commandState) *cobra.Command {
 	cmd.RunE = appRun(state, func(a *app.App) error {
 		args := cmd.Flags().Args()
 		a.ChatJSON(asJSON)
-		return a.ChatWithOptions(app.ChatOptions{Agent: args[0], Task: joinArgs(args[1:]), Interactive: interactive, Session: session})
+		return a.ChatWithOptions(app.ChatOptions{Agent: args[0], Task: joinArgs(args[1:]), Interactive: interactive, Session: session, Verbose: verbose, Runtime: runtime, Namespace: namespace, AzureDiscovery: azureDiscovery})
 	})
 	return cmd
 }

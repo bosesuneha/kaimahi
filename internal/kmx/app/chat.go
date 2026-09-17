@@ -39,10 +39,14 @@ var ChatRetryable = regexp.MustCompile(`(?m)` + chatErrorLine + `(` + chatRefuse
 
 // ChatOptions selects one-shot or session-preserving chat behavior.
 type ChatOptions struct {
-	Agent       string
-	Task        string
-	Interactive bool
-	Session     string
+	Agent          string
+	Task           string
+	Interactive    bool
+	Verbose        bool
+	Session        string
+	Runtime        string
+	Namespace      string
+	AzureDiscovery string
 }
 
 // ChatJSON forces the raw A2A task even when a terminal is attached.
@@ -64,6 +68,19 @@ func (a *App) Chat(agent, task string) error {
 
 // ChatWithOptions asks one question or starts an interactive session.
 func (a *App) ChatWithOptions(opt ChatOptions) error {
+	a.chatVerbose = opt.Verbose
+	if opt.AzureDiscovery != "" {
+		a.azureDiscoveryMode = opt.AzureDiscovery
+	}
+	if opt.Runtime != "" && opt.Runtime != "auto" && opt.Runtime != "orka" && opt.Runtime != "kagent" {
+		return fmt.Errorf("unknown chat runtime %q; use auto, orka or kagent", opt.Runtime)
+	}
+	if opt.AzureDiscovery != "" && opt.AzureDiscovery != "cli" && opt.AzureDiscovery != "sdk" {
+		return fmt.Errorf("unknown Azure discovery %q; use cli or sdk", opt.AzureDiscovery)
+	}
+	if !opt.Interactive && opt.Runtime == "orka" {
+		return fmt.Errorf("Orka chat requires --interactive")
+	}
 	agent, task := opt.Agent, opt.Task
 	if agent == "" {
 		agent = config.DefaultAgent
@@ -73,6 +90,21 @@ func (a *App) ChatWithOptions(opt ChatOptions) error {
 	}
 	if err := a.preflight(depKubectl); err != nil {
 		return err
+	}
+	if opt.Interactive {
+		runtime, namespace, err := a.resolveInteractiveChat(opt, agent)
+		if err != nil {
+			return err
+		}
+		if runtime == "orka" {
+			if opt.Session != "" {
+				return fmt.Errorf("--session is kagent-specific; Orka chat uses fresh Tasks")
+			}
+			if a.chatJSON {
+				return fmt.Errorf("--interactive and --json cannot be used together")
+			}
+			return a.runInteractiveChatBackendInitial(&orkaChatBackend{app: a, agent: agent, namespace: namespace}, opt.Task)
+		}
 	}
 
 	out, status, err := a.askAgent(agent, task, opt.Session, opt.Interactive, ChatRetryable)

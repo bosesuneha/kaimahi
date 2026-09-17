@@ -35,7 +35,7 @@ func TestChatStatusContextAndCommandGroups(t *testing.T) {
 			}
 			continue
 		}
-		if text != "agent\nContext: kind-test forged\n" {
+		if text != "KMX  /  INTERACTIVE CHAT\n\nagent\nContext: kind-test forged\n" {
 			t.Fatalf("startup should lead with agent/context only: %q", text)
 		}
 		r.statusModel("test", true)
@@ -72,11 +72,18 @@ func TestChatStatusIdentityAndUnknownWidth(t *testing.T) {
 			r := &chatRenderer{out: &out, color: color, ui: cliui.WithCapabilities(cliui.Capabilities{Rich: true, Color: color, Width: width})}
 			r.statusStart("agent\x1b[2J", "kind-test\x1b[31m")
 			lines := strings.Split(out.String(), "\n")
-			if ansi.Strip(lines[0]) != "agent" || lines[1] != r.ui.Muted("Context: kind-test") {
+			agentLine := -1
+			for i, line := range lines {
+				if ansi.Strip(line) == "agent" {
+					agentLine = i
+					break
+				}
+			}
+			if !strings.Contains(ansi.Strip(out.String()), "KMX  /  INTERACTIVE") || agentLine < 0 || agentLine+1 >= len(lines) || lines[agentLine+1] != r.ui.Muted("Context: kind-test") {
 				t.Fatalf("identity/context styling: %q", out.String())
 			}
-			if color && lines[0] != lipgloss.NewStyle().Bold(true).Render("agent") {
-				t.Fatalf("agent should be bold without semantic color: %q", lines[0])
+			if color && lines[agentLine] != lipgloss.NewStyle().Bold(true).Render("agent") {
+				t.Fatalf("agent should be bold without semantic color: %q", lines[agentLine])
 			}
 			r.statusEnd()
 			hint := "Type a message. /help for commands; /exit to leave"

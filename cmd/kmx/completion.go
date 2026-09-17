@@ -30,7 +30,18 @@ func completeLiveAgents(cmd *cobra.Command, args []string, toComplete string) ([
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	contextName := completionContext(cmd)
-	values := kubectlCompletion("--context", contextName, "-n", "kagent", "get", "agents.kagent.dev", "-o", "name")
+	runtime, _ := cmd.Flags().GetString("runtime")
+	var values []string
+	if runtime != "orka" {
+		values = kubectlCompletion("--context", contextName, "-n", "kagent", "get", "agents.kagent.dev", "-o", "name")
+	}
+	if cmd.Name() == "chat" && runtime != "kagent" {
+		namespace, _ := cmd.Flags().GetString("namespace")
+		if namespace == "" {
+			namespace = app.OrkaNamespace
+		}
+		values = append(values, kubectlCompletion("--context", contextName, "-n", namespace, "get", "agents.core.orka.ai", "-o", "name")...)
+	}
 	for i, value := range values {
 		if _, name, ok := strings.Cut(value, "/"); ok {
 			values[i] = name
