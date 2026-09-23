@@ -76,6 +76,11 @@ listener inventory, Orka architecture or the project's future shape.
 
 ## Assessments that inform current work
 
+- [Full chat latency profile](chat-performance-profile.md): local, AKS/Foundry
+  and Copilot measurements and optimization priorities.
+- [Local Foundry inference](local-foundry-inference.md): interactive host inference
+  with Azure login, and the separate native Orka integration proposal.
+
 - [Orka composition](reviews/2026-09-09-orka-composition.md): version-qualified
   findings that informed migration; not a current ownership or authoring ruling.
 - [Substrate evaluation boundary](reviews/2026-09-10-substrate-evaluation.md):

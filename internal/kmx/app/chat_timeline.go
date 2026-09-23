@@ -330,7 +330,7 @@ func (m chatTimelineModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.verbose = message == "/verbose-on"
 				m.appendEvent(chatTimelineEvent{kind: "status-message", label: "CHAT", text: fmt.Sprintf("Verbose: %t", m.verbose)})
 				return m, nil
-			case "/tools", "/agent", "/lift", "/inference-copilot", "/inference-local":
+			case "/tools", "/agent", "/lift", "/inference", "/inference-copilot", "/inference-local", "/inference-foundry":
 				m.command = message
 				m.quitting = true
 				return m, tea.Quit

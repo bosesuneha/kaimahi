@@ -115,6 +115,19 @@ func (a *App) QuickstartWizard(opt QuickstartWizardOptions) error {
 	}
 	a.copilotCLI = setup.copilotCLI
 	a.chatInference, a.copilotModel = setup.chatInference, setup.copilotModel
+	if a.chatInference == "foundry" {
+		backend := &orkaChatBackend{app: a, agent: completed.Name, namespace: completed.Namespace}
+		if err := backend.configureFoundryChat(a.operationContext()); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		}
+		// The persisted Provider is a valid deferred local fallback. Foundry
+		// execution uses the host credential/client, not this placeholder key.
+		completed.Model = a.Cfg.Model
+		completed.BaseURL = "http://ollama.ollama.svc.cluster.local:11434/v1"
+	}
 	deploy := func(worker *App) error { return worker.CreateAgent(completed) }
 	if imported != nil {
 		deploy = func(worker *App) error { return worker.attachQuickstartK8sTool(completed.Name, completed.Namespace) }
@@ -205,7 +218,7 @@ type quickstartSetupEvent struct {
 }
 
 func (a *App) quickstartWizardModels() []localModel {
-	models := []localModel{{Provider: "bundled", Model: a.Cfg.Model}}
+	models := []localModel{{Provider: "bundled", Model: a.Cfg.Model}, {Provider: "foundry", Model: "Azure Foundry"}}
 	env := a.localModels
 	if env == nil {
 		env = a.defaultLocalModelEnvironment()
@@ -265,6 +278,13 @@ func (a *App) quickstartWizardSetup(modelPick <-chan *localModel, report func(qu
 		return fmt.Errorf("inference selection is required")
 	}
 	a.chatInference = "local"
+	if choice.Provider == "foundry" {
+		a.chatInference = "foundry"
+		for step := 2; step <= 4; step++ {
+			report(quickstartSetupEvent{step: step, status: "skipped", note: "Foundry hosted inference; no local model download. Configure Azure login after setup."})
+		}
+		return a.quickstartWizardOrka(report)
+	}
 	if choice.Provider == "copilot" {
 		a.chatInference, a.copilotModel = "copilot", choice.Model
 		// Local resources remain available for an explicit comparison later.
@@ -630,13 +650,13 @@ func (m quickstartWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *quickstartWizardModel) chooseModel(choice localModel) {
 	m.chosen = &choice
-	if choice.Provider != "copilot" && choice.Provider != "existing" {
+	if choice.Provider != "copilot" && choice.Provider != "existing" && choice.Provider != "foundry" {
 		m.create.opt.Model = choice.Model
 		if choice.Endpoint != "" {
 			m.create.opt.BaseURL = strings.TrimSuffix(choice.Endpoint, "/") + "/v1"
 		}
 	}
-	if choice.Provider == "copilot" {
+	if choice.Provider == "copilot" || choice.Provider == "foundry" {
 		m.create.opt.Model = m.defaultModel.Model
 		m.create.opt.BaseURL = m.defaultModel.Endpoint + "/v1"
 	}
@@ -667,7 +687,7 @@ func (m *quickstartWizardModel) filterInferenceChoices() {
 				choices = append([]localModel{{Provider: "copilot", Model: "auto"}}, choices...)
 				copilotAdded = true
 			}
-		} else if m.imported == nil {
+		} else if m.imported == nil || model.Provider == "foundry" {
 			choices = append(choices, model)
 		}
 	}
@@ -1070,6 +1090,9 @@ func quickstartSize(size int64) string {
 }
 
 func quickstartModelLabel(model localModel) string {
+	if model.Provider == "foundry" {
+		return "Azure Foundry · Entra login · host execution"
+	}
 	if model.Provider == "copilot" {
 		return "Copilot CLI · " + model.Model
 	}
@@ -1092,6 +1115,8 @@ func quickstartModelLabel(model localModel) string {
 
 func quickstartProviderLabel(model localModel) string {
 	switch model.Provider {
+	case "foundry":
+		return "Azure Foundry (Azure login)"
 	case "bundled":
 		return "Local Orka Model (available to install)"
 	case "copilot":
@@ -1105,6 +1130,8 @@ func quickstartProviderLabel(model localModel) string {
 
 func quickstartProviderDescription(model localModel) string {
 	switch model.Provider {
+	case "foundry":
+		return "Hosted model · local HTTP tools · no API key or model download"
 	case "bundled":
 		if model.Model == "qwen2.5:3b" {
 			return model.Model + " · Ollama (requires ~1.9 GB download if not installed)"
@@ -1337,8 +1364,11 @@ func (b *orkaChatBackend) Connect(ctx context.Context, renderer *chatRenderer) (
 	}
 	renderer.statusStart(b.agent, b.app.Cfg.KubeContext)
 	runtime, tasks := "Orka Task worker Jobs", "Each message creates one fresh local Task"
-	if b.app.chatInference == "copilot" {
+	if b.app.chatInference == "copilot" || b.app.chatInference == "foundry" {
 		runtime, tasks = "Host Copilot CLI · "+b.app.copilotModel, "Copilot prompts with KMX tool execution; no Orka Task created"
+		if b.app.chatInference == "foundry" {
+			runtime, tasks = "Host Foundry client · Entra login", "Native model tool calls with KMX HTTP tool execution; no Orka Task created"
+		}
 		supported, _, err := b.copilotTools(ctx)
 		if err != nil {
 			return nil, err
@@ -1347,7 +1377,7 @@ func (b *orkaChatBackend) Connect(ctx context.Context, renderer *chatRenderer) (
 		for _, tool := range supported {
 			names = append(names, tool.Name)
 		}
-		tools = fmt.Sprintf("(%d tools enabled via adapter) %s", len(names), strings.Join(names, ", "))
+		tools = fmt.Sprintf("(%d tools enabled via host adapter) %s", len(names), strings.Join(names, ", "))
 	}
 	return []cliui.Field{
 		{Label: "Location", Value: location},
@@ -1361,7 +1391,7 @@ func (b *orkaChatBackend) Connect(ctx context.Context, renderer *chatRenderer) (
 
 func (b *orkaChatBackend) Send(ctx context.Context, message string, renderer *chatRenderer) error {
 	renderer.beginAssistant(b.agent)
-	if b.app.chatInference == "copilot" {
+	if b.app.chatInference == "copilot" || b.app.chatInference == "foundry" {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		raw, err := b.app.orkaCapture(ctx, nil, "-n", b.namespace, "get", "agents.core.orka.ai", b.agent, "-o", "json")
@@ -1373,6 +1403,20 @@ func (b *orkaChatBackend) Send(ctx context.Context, message string, renderer *ch
 			return err
 		}
 		tools, unavailable, err := b.copilotToolsFromAgent(ctx, raw)
+		if b.app.chatInference == "foundry" {
+			if err != nil {
+				return err
+			}
+			if len(unavailable) > 0 {
+				renderer.assistantOperation(b.agent, "TOOLS", "", colorYellow, "Unavailable in host inference: "+strings.Join(unavailable, ", "))
+			}
+			answer, err := b.foundryTurn(ctx, instructions, message, tools, renderer)
+			if err != nil {
+				return err
+			}
+			renderer.assistant(b.agent, answer, true)
+			return nil
+		}
 		answer, err := b.copilotPreparedTurn(ctx, instructions, message, renderer, tools, unavailable, err)
 		if err != nil {
 			return err

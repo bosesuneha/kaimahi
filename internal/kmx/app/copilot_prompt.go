@@ -144,10 +144,10 @@ func quickstartInference(mode, copilot string) (string, error) {
 			return "", fmt.Errorf("Copilot CLI is not installed; install it or use --inference local")
 		}
 		return mode, nil
-	case "local":
+	case "local", "foundry":
 		return mode, nil
 	default:
-		return "", fmt.Errorf("unknown inference %q; use auto, copilot, or local", mode)
+		return "", fmt.Errorf("unknown inference %q; use auto, copilot, foundry, or local", mode)
 	}
 }
 
@@ -252,6 +252,9 @@ func (b *orkaChatBackend) copilotInstructionsFromAgent(ctx context.Context, raw 
 }
 
 func (b *orkaChatBackend) inferenceLabel() string {
+	if b.app.chatInference == "foundry" && b.app.foundryClient != nil {
+		return "Foundry · " + b.app.foundryClient.config.Deployment + " · Entra login · host HTTP tools"
+	}
 	if b.app.chatInference == "copilot" {
 		return "Copilot CLI · " + b.app.copilotModel + " · KMX tool-call adapter"
 	}

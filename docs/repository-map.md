@@ -34,7 +34,7 @@ checks.
 | `plane/` | model bridge and ordinary budget administration | — | test fakes inside packages |
 | `k8s/` | embedded model/plane/observability and retained kagent artifacts | — | — |
 | `scripts/` | 8 (6 embedded in the binary, 2 operator) | 1 | 43 (checkers, probes, CI fixtures, mutation specs) |
-| `docs/` | 45 tracked files; guides, direction, retirement records and assets | historical scenario records | maintainer and process docs |
+| `docs/` | 47 tracked files; guides, direction, retirement records and assets | historical scenario records | maintainer and process docs |
 | `brand/` | 6 assets used by the README and the org profile | — | its own checker |
 
 ## `cmd/` — installed CLI
@@ -53,7 +53,7 @@ packages.
 
 | Package or data directory | Non-test files | Class | What it is |
 |---|---|---|---|
-| `kmx/app` | 70 | Installed | Command orchestration, model/cluster operations, shared interactive chat UI, native Orka create/readiness/Task-result handling and retained kagent operations. |
+| `kmx/app` | 72 | Installed | Command orchestration, model/cluster operations, shared interactive chat UI, Foundry host inference, native Orka create/readiness/Task-result handling and retained kagent operations. |
 | `kmx/admin` | 6 | Installed | Model-plane admin client, ordinary caps, credentials and model ledger views. |
 | `kmx/scaffold` | 8 | Installed | Orka authoring, model/migration artifacts, retained kagent checks and shared YAML/name helpers. |
 | `kmx/orkaschema` | 3 | Installed | Structural schema validator, attribution and upstream licence. |
@@ -217,7 +217,7 @@ line rather than a recipe. Its existing callers include
 are comments). Existing agent tool-call verification concerns the retained
 direct kagent path, not a removed gateway assertion.
 
-## `docs/` — 45 tracked files, guides and retirement records
+## `docs/` — 47 tracked files, guides and retirement records
 
 **Guides and index (23):** `README.md`, `getting-started.md`, `kmx.md`,
 `aks.md`, `models.md`, `tools.md`, `spend.md`, `tool-governance.md`,
@@ -232,12 +232,12 @@ operating instructions for deleted code.
 
 **Demonstration reference (1):** `demo.md` (the hello-to-governed model journey and other demo paths).
 
-**Maintainer and process (13):** `development.md`, `repository-map.md`,
+**Maintainer and process (15):** `development.md`, `repository-map.md`,
 `COORDINATION.md`, `reviews/2026-09-09-orka-composition.md`,
 `reviews/2026-09-10-substrate-evaluation.md`, `entry-point-principles.md`,
 `cli-ux-plan.md`, `charm-ux-followup-plan.md`, `NAMING.md`,
 `azure-discovery-performance.md`, `copilot-performance.md`, `orka-latency.md`
-and `orka-startup-performance.md`.
+`orka-startup-performance.md`, `local-foundry-inference.md` and `chat-performance-profile.md`.
 
 **Assets (2):** `docs/assets/architecture.mmd` and `docs/assets/architecture.svg`.
 These depict the pre-retirement platform, not the current model bridge. The

@@ -101,7 +101,9 @@ func TestCopilotLoginStatusUsesCLIProtocol(t *testing.T) {
 	} {
 		dir := t.TempDir()
 		frame := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(tc.response), tc.response)
-		fakeTool(t, dir, "copilot", "printf '%s' "+shellArg(frame))
+		// Keep stdin open until the client has sent its frame header. Exiting
+		// immediately can race the request write and cause a spurious EPIPE.
+		fakeTool(t, dir, "copilot", "IFS= read -r header\nprintf '%s' "+shellArg(frame))
 		if got := copilotLoginStatus(t.Context(), filepath.Join(dir, "copilot")); got != tc.want {
 			t.Fatalf("got=%q want=%q", got, tc.want)
 		}

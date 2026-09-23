@@ -54,6 +54,7 @@ type App struct {
 	azureDiscoveryMode string
 	copilotCLI         string
 	copilotModel       string
+	foundryClient      *foundryChatClient
 	Err                io.Writer
 	Stdin              *os.File
 	// now is injectable so progress timing can be tested without sleeping.

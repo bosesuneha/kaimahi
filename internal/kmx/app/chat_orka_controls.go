@@ -54,6 +54,27 @@ func orkaEnabledToolsSummary(raw []byte) (string, error) {
 
 // Configure runs only between turns, when no task or input reader owns stdin.
 func (b *orkaChatBackend) Configure(ctx context.Context, command string, renderer *chatRenderer) (bool, error) {
+	if (command == "/inference" || command == "/inference-foundry") && (!isInteractiveTerminal(b.app.Stdin) || !isInteractiveTerminal(b.app.Out)) {
+		return false, fmt.Errorf("%s requires an interactive terminal", command)
+	}
+	if command == "/inference" {
+		m, err := runChatPicker(ctx, b.app.Stdin, b.app.Out, chatPicker{title: "INFERENCE · where the model runs", items: []chatPickerItem{
+			{name: "Azure Foundry", detail: "Azure login · host tool loop · no API key"},
+			{name: "Copilot CLI", detail: "GitHub login · host tool adapter"},
+			{name: "Agent Provider", detail: "Native Orka Task · cluster-configured inference"},
+		}, action: "select"})
+		if err != nil || !m.accepted {
+			return false, err
+		}
+		return b.Configure(ctx, []string{"/inference-foundry", "/inference-copilot", "/inference-local"}[m.selection], renderer)
+	}
+	if command == "/inference-foundry" {
+		err := b.configureFoundryChat(ctx)
+		if err == context.Canceled && ctx.Err() == nil {
+			return false, nil
+		}
+		return false, err
+	}
 	// Configuration/source changes invalidate reusable transport state.
 	b.Close()
 	if command == "/lift" {

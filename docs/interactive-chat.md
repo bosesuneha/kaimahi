@@ -1,5 +1,11 @@
 # Interactive chat entry points
 
+Use `/inference` to choose **Foundry (Azure login)**, Copilot CLI, or the Agent's
+native Orka Provider. `/inference-foundry` opens saved configuration, Azure browse
+or manual endpoint setup. Foundry host mode uses Entra authentication and native
+model function calls with KMX's supported cluster HTTP tools. See
+[local Foundry inference](local-foundry-inference.md) for scope and setup.
+
 Quickstart's post-wizard chat and direct Orka chat now use the same entry point,
 backend, renderer and command loop:
 

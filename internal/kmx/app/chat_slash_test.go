@@ -48,7 +48,7 @@ func TestOrkaSlashCompletionOnlyOffersItsCommands(t *testing.T) {
 	if strings.Contains(names, "/govern") || strings.Contains(names, "/session") {
 		t.Fatal("kagent commands offered to Orka")
 	}
-	if got := slashMatchesFrom(orkaSlashCommands, "/inference-"); len(got) != 2 {
+	if got := slashMatchesFrom(orkaSlashCommands, "/inference-"); len(got) != 3 {
 		t.Fatalf("matches=%v", got)
 	}
 	if got := slashMatchesFrom(orkaSlashCommands, "/tools "); len(got) != 0 {
@@ -57,7 +57,13 @@ func TestOrkaSlashCompletionOnlyOffersItsCommands(t *testing.T) {
 }
 
 func TestSlashPopupFitsAndKeepsSelectionVisible(t *testing.T) {
-	rows := slashPopup(orkaSlashCommands, 8, 32, 6)
+	selected := 0
+	for i, command := range orkaSlashCommands {
+		if command.name == "/verbose-off" {
+			selected = i
+		}
+	}
+	rows := slashPopup(orkaSlashCommands, selected, 32, 6)
 	if len(rows) > 6 {
 		t.Fatal("popup too tall")
 	}

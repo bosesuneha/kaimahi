@@ -74,7 +74,7 @@ func TestOrkaSlashPopupSelectsWithoutSubmittingPrematurely(t *testing.T) {
 	chatPTYReadUntil(t, master, &captured, func(s string) bool { return strings.Contains(s, "MESSAGE") })
 	_, _ = io.WriteString(master, "/inf")
 	chatPTYReadUntil(t, master, &captured, func(s string) bool { return strings.Contains(s, "/inference-local") })
-	_, _ = io.WriteString(master, "\x1b[B\t")
+	_, _ = io.WriteString(master, "\x1b[B\x1b[B\t")
 	chatPTYReadUntil(t, master, &captured, func(s string) bool { return strings.Contains(ansi.Strip(s), "YOU > /inference-local") })
 	select {
 	case <-done:
