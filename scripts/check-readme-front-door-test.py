@@ -11,45 +11,62 @@ spec = importlib.util.spec_from_file_location("front_door", CHECKER)
 front_door = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(front_door)
 
-DAY_ZERO = """kmx agent create
+JOURNEY = """kmx agent create
 kmx agent lift
 """
 QUICKSTART = """go install github.com/kaimahi-agents/kaimahi/cmd/kmx@main
 kmx quickstart-wizard
 """
-GOOD = """<img src="brand/hero.png">
+GOOD = """<img src="brand/ketu.svg" alt="Kaimahi ketu mark">
 # Kaimahi
-**Create an Agent locally. Prove it locally. Lift it to Kubernetes.**
-## The KMX Journey
-### Day 0: Two Verbs
+**Agent Builder CLI for Kubernetes.**
+[![CI](https://github.com/kaimahi-agents/kaimahi/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kaimahi-agents/kaimahi/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/kaimahi-agents/kaimahi)](https://github.com/kaimahi-agents/kaimahi/releases)
+[![License](https://img.shields.io/github/license/kaimahi-agents/kaimahi)](LICENSE)
+## Create, Prove, Lift
 ```bash
-""" + DAY_ZERO + """```
+""" + JOURNEY + """```
 ## Quickstart
 ```bash
 """ + QUICKSTART + """```
-## Platform Boundary
-Platforms run agents; KMX is the developer experience.
+## Runtime Contract
+Runtimes execute agents; KMX is the developer experience.
 ## Migrate Model Traffic
 The owner keeps the application's Deployment.
 ## Status
-Authoring is an open decision.
+Current and proposed capabilities are separated.
 ## Documentation
 See the documentation index.
+## Development
+See the contribution guide.
+> [!IMPORTANT]
+> **Kaimahi is experimental and under active development.** Interfaces may change.
+> [!NOTE]
+> KMX is the Agent Builder and lifecycle layer, not a runtime or generic
+> governance control plane.
 """
 
 CASES = [("valid KMX front door", GOOD, None)]
 # These expectations are independent of the checker's marker lists: deleting
 # a marker or emptying a list must make the self-test fail.
 for label, literal in [
-    ("hero image", '<img src="brand/hero.png">\n'),
-    ("product line", "**Create an Agent locally. Prove it locally. Lift it to Kubernetes.**\n"),
-    ("KMX journey heading", "## The KMX Journey\n"),
-    ("Day 0 heading", "### Day 0: Two Verbs\n"),
+    ("ketu icon", '<img src="brand/ketu.svg" alt="Kaimahi ketu mark">\n'),
+    ("product line", "**Agent Builder CLI for Kubernetes.**\n"),
+    ("journey heading", "## Create, Prove, Lift\n"),
     ("Quickstart heading", "## Quickstart\n"),
-    ("platform boundary heading", "## Platform Boundary\n"),
+    ("runtime contract heading", "## Runtime Contract\n"),
     ("migration heading", "## Migrate Model Traffic\n"),
     ("Status heading", "## Status\n"),
     ("documentation heading", "## Documentation\n"),
+    ("Development heading", "## Development\n"),
+    ("experimental notice", "> [!IMPORTANT]\n> **Kaimahi is experimental and under active development.** Interfaces may change.\n"),
+    ("runtime ownership note", "> [!NOTE]\n> KMX is the Agent Builder and lifecycle layer, not a runtime or generic\n> governance control plane.\n"),
+]:
+    CASES.append((f"missing {label}", GOOD.replace(literal, ""), f"{label} is missing"))
+for label, literal in [
+    ("CI badge", "[![CI](https://github.com/kaimahi-agents/kaimahi/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kaimahi-agents/kaimahi/actions/workflows/ci.yml)\n"),
+    ("release badge", "[![Release](https://img.shields.io/github/v/release/kaimahi-agents/kaimahi)](https://github.com/kaimahi-agents/kaimahi/releases)\n"),
+    ("license badge", "[![License](https://img.shields.io/github/license/kaimahi-agents/kaimahi)](LICENSE)\n"),
 ]:
     CASES.append((f"missing {label}", GOOD.replace(literal, ""), f"{label} is missing"))
 for label, literal in [
@@ -66,27 +83,27 @@ for command in ("kmx agent create", "kmx agent lift", "kmx quickstart-wizard"):
 
 CASES += [
     ("reviewed commit build", GOOD.replace("cmd/kmx@main", "cmd/kmx@572f3a6"), None),
-    ("release without Orka helpers", GOOD.replace("cmd/kmx@main", "cmd/kmx@v0.1.0"),
+    ("release without current helpers", GOOD.replace("cmd/kmx@main", "cmd/kmx@v0.1.0"),
      "go install .../cmd/kmx is missing"),
-    ("latest tag still predates Orka", GOOD.replace("cmd/kmx@main", "cmd/kmx@latest"),
+    ("latest tag still predates current helpers", GOOD.replace("cmd/kmx@main", "cmd/kmx@latest"),
      "go install .../cmd/kmx is missing"),
     ("missing install revision", GOOD.replace("cmd/kmx@main", "cmd/kmx@"),
      "go install .../cmd/kmx is missing"),
     ("revision prefix is not a revision", GOOD.replace("cmd/kmx@main", "cmd/kmx@main-obsolete"),
      "go install .../cmd/kmx is missing"),
-    ("empty document", "", "hero image is missing"),
-    ("Day 0 commands only in prose", GOOD.replace("```bash\n" + DAY_ZERO + "```", DAY_ZERO),
-     "Day 0 has no fenced command block"),
+    ("empty document", "", "ketu icon is missing"),
+    ("journey commands only in prose", GOOD.replace("```bash\n" + JOURNEY + "```", JOURNEY),
+     "create/prove/lift has no fenced command block"),
     ("quickstart commands only in prose", GOOD.replace("```bash\n" + QUICKSTART + "```", QUICKSTART),
      "Quickstart has no fenced command block"),
-    ("empty Day 0 first block", GOOD.replace("```bash\n", "```bash\n```\n```bash\n", 1),
+    ("empty journey first block", GOOD.replace("```bash\n", "```bash\n```\n```bash\n", 1),
      "kmx agent create is missing"),
     ("empty quickstart first block", GOOD.replace("```bash\n" + QUICKSTART, "```bash\n```\n```bash\n" + QUICKSTART),
      "go install .../cmd/kmx is missing"),
     ("quickstart commands only in a later section",
      GOOD.replace(QUICKSTART, "kmx version\n").replace("## Status", "```bash\n" + QUICKSTART + "```\n## Status"),
      "go install .../cmd/kmx is missing"),
-    ("Day 0 commands out of order", GOOD.replace("kmx agent create\nkmx agent lift", "kmx agent lift\nkmx agent create"),
+    ("journey commands out of order", GOOD.replace("kmx agent create\nkmx agent lift", "kmx agent lift\nkmx agent create"),
      "kmx agent lift is missing"),
     ("quickstart commands out of order", GOOD.replace("go install github.com/kaimahi-agents/kaimahi/cmd/kmx@main\nkmx quickstart-wizard", "kmx quickstart-wizard\ngo install github.com/kaimahi-agents/kaimahi/cmd/kmx@main"),
      "kmx quickstart-wizard is missing"),
