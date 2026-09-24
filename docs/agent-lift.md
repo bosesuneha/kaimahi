@@ -4,9 +4,9 @@
 > as existing cites the file and line that establishes it. Behaviour proposed
 > here says "would". No performance, cost or reliability claim is made.
 
-`kmx agent lift` moves one agent from where it runs now to a destination that
-can run it, without a terminal session. It is the non-interactive form of the
-`/lift` slash command described in [`interactive-lift.md`](interactive-lift.md).
+`kmx agent lift` deploys one agent's definition to a destination that can run
+it, without a terminal session. It is the non-interactive form of the `/lift`
+slash command described in [`interactive-lift.md`](interactive-lift.md).
 
 ## Why this is not configuration or an upstream contribution
 
@@ -18,79 +18,153 @@ refuses a non-terminal outright: `chat_orka_controls.go:81-83` returns
 that turns the existing flow into a scriptable one.
 
 **Not Orka.** Orka deploys what it is given. Selecting a destination, checking
-that destination's prerequisites, resolving where inference comes from and
-carrying one agent's definition between two clusters is an operation across two
-platforms. Orka is one of them.
+that destination's prerequisites and resolving where inference comes from are
+operations across two platforms. Orka is one of them.
 
-**Not `kubectl apply`.** The source Agent carries server-managed metadata,
-status, a `providerRef` bound to the source namespace, and a `secretRef` whose
-value must not travel. `portableLiftBundle` (`chat_lift.go:302-329`) exists
-because a copy is not an apply.
+**Not `kubectl apply`.** A bundle is not a manifest. It renders to one, against
+a target whose CRDs and namespace differ from the source's, with a `providerRef`
+and `secretRef` rebound in the process.
 
 **Not already built.** `README.md:36` states it: *"A standalone
 `kmx agent lift` is not implemented yet."* `scripts/check-readme-front-door.py:36`
 requires the command to appear on the front page, and it does not exist.
 
+## The definition comes from a bundle, not from the cluster
+
+This is the central decision.
+
+[#194](https://github.com/kaimahi-agents/kaimahi/issues/194) decision 1 makes a
+bundle in git the definition of an agent, identified by a digest of the inputs
+that define behaviour. Draft PR #202 implements that as `PortableAgent`
+(`internal/kmx/runtime/portable.go`) with `PortableBundleDigest` and
+`RenderedBundleDigest` as separate identities.
+
+Lifting a bundle rather than a cluster read buys four things:
+
+1. **The deployment has an identity.** Under #194 deployments point to accepted
+   revisions and receipts bind to one. An Agent read out of a cluster has no
+   digest, so lifting it produces a deployment nothing can name, record,
+   evaluate against or roll back to.
+2. **The source cluster stops being a prerequisite.** A bundle can be deployed
+   when the source is unreachable, retired, or was never the same shape. The
+   same revision can reach several destinations without several reads.
+3. **Drift does not travel.** A live Agent carries whatever the API server
+   defaulted and whatever anyone edited in place. Copying that to a destination
+   presents an accident as the definition.
+4. **It is a composition, not a parallel path.** Lift becomes target selection
+   and prerequisites around #202's `Render` and `Deploy`, rather than a second
+   route from one cluster to another.
+
+**This makes the command depend on #202.** That is a real cost, and it is
+worth paying for the four properties above.
+
+## Capture
+
+Nothing today produces a bundle from a running agent. `portable.go` parses one
+(`ParsePortableAgent`); there is no cluster-to-portable direction. So an agent
+that has no bundle yet needs one made first, and that is the new work here.
+
+Capture reads a running Agent and its Provider and writes a portable bundle: a
+file the operator reviews and commits, since #194 decision 4 puts revisions in
+git. It is a translation, not an export — the portable document's spec is
+instructions and a model name, and everything platform-specific belongs in an
+extension block.
+
+Two rules follow from that:
+
+**It refuses rather than warns.** A live Agent can hold fields the portable
+format has no block for. #202's `Loss` type already states the rule: *"Losses
+are normally empty because lossy mappings fail."* A bundle missing a field
+silently is not the agent.
+
+**It carries no secret values.** A captured bundle names a `secretRef`;
+`refusePortableSecretShapes` already refuses credential-shaped input, and the
+destination must hold the Secret itself.
+
+Whether capture is a flag on lift, a separate `kmx agent capture`, or both, is
+[open](#open-questions). It is useful on its own: it is the on-ramp for every
+agent that exists today into the #194 lifecycle.
+
 ## What this proposes
 
-One command that performs the same operation as `/lift`, with every decision
-supplied as a flag rather than asked.
-
 ```
-kmx agent lift <name> \
-  --namespace <ns> \
+kmx agent lift <bundle> \
   --to-context <ctx> | --subscription <id> --resource-group <rg> --cluster <name> \
   --to-namespace <ns> \
-  --inference provider:<name> | keep-source \
+  --inference provider:<name> | keep-bundle \
   [--install-orka] [--install-k8s-tool] \
   [--plan]
 ```
+
+and, for an agent that has no bundle yet, a capture step that produces one from
+a running agent before the same deployment flow runs.
 
 ## What this does not claim
 
 Listed before the design, because they bound its value.
 
-- **Not a replacement for `/lift`.** The interactive flow discovers: it
-  searches subscriptions, fuzzy-matches AKS clusters, floats remembered
-  choices, and offers verified alternatives when quota is exhausted. A flag
-  cannot browse. This command is for a destination you can already name.
+- **Not a replacement for `/lift`.** The interactive flow discovers: it searches
+  subscriptions, fuzzy-matches AKS clusters, floats remembered choices, and
+  offers verified alternatives when quota is exhausted. A flag cannot browse.
+  This command is for a destination you can already name.
 - **Not cluster provisioning.** It creates no AKS cluster. `kmx lift` is that
   command and stays separate ([naming](#open-questions)).
 - **Not Azure Foundry provisioning.** See [scope](#scope-v1-refuses-foundry-creation).
-- **Not a move.** The source is read and left running. Nothing is deleted.
+- **A captured bundle is not the revision the agent was deployed from.**
+- **Not a move.** Nothing at the source is changed or deleted.
 - **Not a task replay.** No Task is created, before or after.
 - **Not transactional.** A failure after the Provider is created leaves the
   Provider. `interactive-lift.md` records the same property for `/lift`:
   *"A partial deployment reports an error without deleting resources."*
-- **Not a secret copy.** Secret values never travel. `portableLiftBundle`
-  emits a value-free stub; the destination's Secret must already exist.
+- **Not a secret copy.** Secret values never travel.
 
 ## Scope: v1 refuses Foundry creation
 
-The existing flow has twenty decision points. Ten of them
-(`chat_lift_foundry.go`, `chat_lift_quota.go`) provision Azure AI Services
-accounts and model deployments, with quota preflight, three-region fan-out and
-two separate billing confirmations (`chat_lift_foundry.go:209, 300`).
+Ten of `/lift`'s twenty decision points (`chat_lift_foundry.go`,
+`chat_lift_quota.go`) provision Azure AI Services accounts and model
+deployments, with quota preflight, three-region fan-out and two billing
+confirmations. **`--inference foundry` would be refused, naming `/lift`
+instead.**
 
-**This command would refuse `--inference foundry` and name `/lift` instead.**
+The quota flow is not a confirmation a `--yes` could replace: it is a search
+across regions for a combination that exists. A flag cannot conduct that
+search, and a command that picked one silently would be choosing a region and
+a bill on the operator's behalf. `kmx lift`'s `--payload` is required with no
+default for the same reason (`lift/plan.go:116-130`).
 
-The repository already settled the equivalent question once. `kmx lift`'s
-`--payload` is required with no default, and `lift/plan.go:116-130` explains
-why: *"This command bills money and installs a platform. A default would mean
-an existing script quietly changed which one it deploys."* A flag that creates
-a billable Azure account non-interactively is the same hazard with less review
-in front of it.
-
-Refusing is also honest about what is lost. The quota flow is not a
-confirmation that could be replaced by `--yes`: it is a search across regions
-for a combination that exists. A flag cannot conduct that search, and a command
-that picked one silently would be choosing a region and a bill on the
-operator's behalf.
-
-Existing Foundry-backed Providers remain fully usable through
+Existing Foundry-backed Providers stay usable through
 `--inference provider:<name>`. What v1 refuses is *creating* them.
 
 ## Design
+
+### The steps
+
+`/lift` runs Target → Orka → Inference → Tools → Deploy → Connect
+(`interactive-lift.md`). Non-interactively, Connect has nothing to reconnect and
+Definition replaces the source read:
+
+| Step | What it does |
+|---|---|
+| Definition | Resolve the bundle. Capture one first if the agent has none |
+| Target | Resolve the destination context, via kubeconfig or AKS |
+| Orka | Check destination CRDs and controller readiness; install only if permitted |
+| Inference | Resolve the destination Provider |
+| Tools | Check referenced tools; install only if permitted |
+| Deploy | Render the bundle for the target, then create and wait for Ready |
+
+Lift would be **defined in terms of deploy, not beside it**: the Deploy step is
+#202's `Render` and `Deploy` for the resolved target, unchanged. Lift owns only
+what deploy should not — definition resolution, target resolution, prerequisite
+installation, and the stricter guard below.
+
+That matters for more than tidiness. There is one implementation of
+deployment, so there is nothing to drift; and if lift later proves
+unnecessary, removing it costs nothing, because it holds no deployment logic of
+its own.
+
+The difference between the two is their **preconditions**. Deploy assumes a
+destination that is already ready. Lift makes one ready. Whether that justifies
+a separate verb is [open](#open-questions).
 
 ### Flags and the decisions they replace
 
@@ -105,9 +179,9 @@ Existing Foundry-backed Providers remain fully usable through
 | Retry after failure | `chat_lift_deploy.go:60-63` | re-run the command |
 
 `--inference` has **no default**, for the reason `--payload` has none. Keeping
-the source configuration is frequently wrong: a source Provider pointing at a
-cluster-local Ollama names a Service that does not exist at the destination.
-The command would not guess which of those two an operator meant.
+the bundle's own configuration is frequently wrong: a Provider naming a
+cluster-local Ollama Service resolves to nothing at the destination. The
+command would not guess which of those two an operator meant.
 
 ### The guard is not bypassed
 
@@ -125,21 +199,22 @@ behaviour every other writing command has: a local kind cluster proceeds with a
 banner, anything else requires typed confirmation naming it or
 `KAIMAHI_CONFIRM=<context>`.
 
-### Reusing what is already headless
+### What already exists
 
 | Piece | Location | State |
 |---|---|---|
+| Portable bundle, digests | `internal/kmx/runtime/portable.go`, `digest.go` | **Draft PR #202** |
+| Render / Deploy per target | `internal/kmx/runtime/lifecycle.go` | **Draft PR #202** |
 | Deploy core | `orka_create_online.go:90-267` | Headless. Only seam is `App.operationProgress` (`app.go:42-43`), which may be nil |
 | Reuse compare | `lift_reconcile.go:12-54` | Headless, gated by `App.liftReuse` |
-| Metadata strip / rebind | `chat_lift.go:302-329` | Pure |
 | Orka CRD check | `chat_lift_prerequisites.go:33-46` | Already an `*App` method, no TUI |
 | Endpoint probe Job | `chat_lift_endpoint.go:105-153` | Headless, already tested with a fake kubectl |
 | Install Orka | `orka.go:166` | Headless |
 | Install k8s tool | `orka_k8s_tool.go:24` | Headless |
-| Location records | `agent_locations.go:20-145` | Pure + IO, no TUI |
+| **Cluster to portable (capture)** | — | **Does not exist** |
 
-The work is therefore **not reimplementation**. It is a resolved-options struct,
-a headless driver over these pieces, and refusals where `/lift` asks.
+Apart from capture, the work is a resolved-options struct, a headless driver
+over these pieces, and refusals where `/lift` asks.
 
 ### Two definitions of ready
 
@@ -157,9 +232,9 @@ not proposed here.
 
 ### `--plan`
 
-Prints the resolved destination, the source and destination Agent identity, the
-inference selection, every prerequisite that is absent, and what would be
-created versus reused — then stops. No cluster write occurs.
+Prints the resolved bundle and its digest, the destination, the inference
+selection, every prerequisite that is absent, and what would be created versus
+reused — then stops. No cluster write occurs.
 
 The precedent is `kmx lift --plan`: *"print what would be created, where, and
 stop"* (`lift_commands.go`).
@@ -186,44 +261,36 @@ classified exit status exists.
 
 ## The `az` seam
 
-`liftDiscovery` (`chat_lift.go:22-37`) and `liftAzureWrite`
-(`chat_lift_foundry.go:48-63`) call `exec.CommandContext` directly, bypassing
-`App.Run`. They therefore carry no `Runner.Env`, no `Runner.Unset`, no echo,
-and discard stderr to `io.Discard`. Tests can only substitute `az` by shadowing
-`PATH` (`chat_lift_progress_test.go:37-42`).
+`liftDiscovery` and `liftAzureWrite` called `exec.CommandContext` directly,
+bypassing `App.Run`, so they carried no `Runner.Env` and no `Runner.Unset`: a
+caller that removed a variable was not obeyed, and `az` could only be
+substituted in a test by shadowing `PATH`. Every kubectl call goes through
+`a.Command` → `a.Run` (`orka_create_online.go:20-40`, `app.go:142-150`).
 
-Every kubectl call, by contrast, goes through `a.Command` → `a.Run`
-(`orka_create_online.go:20-40`, `app.go:142-150`).
-
-AKS target resolution needs `az`. This command would route those calls through
-`App.Run` like every other subprocess. That is a small change to shared code and
-it is why [phase 1](#implementation-plan) is separable and worth landing alone.
+AKS target resolution needs `az`, so those calls now prepare through the runner
+and take their own deadline, which is the shape `orkaCapture` uses. That change
+is phase 1 below and is independent of everything else in this document.
 
 ## Implementation plan
 
-Four changes, each independently reviewable. Only the first touches shared code.
+**1 — Route `az` through `App.Run`.** Independent of the definition question
+and of #202. AKS target resolution needs `az`, and the seam above is the
+prerequisite for testing any of it.
 
-**1 — Route `az` through `App.Run`.** Replace the two raw `exec.CommandContext`
-sites with the `orkaCapture` shape: prepare through the Runner, then give the
-command its own deadline. The calls gain `Runner.Env` and `Runner.Unset`
-handling, which a raw `exec.Command` cannot provide — it inherits the process
-environment but cannot take a variable away. They are deliberately *not*
-echoed: these run underneath a loading pane, and `Capture` already records the
-rule that a read printing every query would be unreadable.
+**2 — Capture: a running agent to a portable bundle.** The new work. Refuses
+rather than warns on anything the portable format cannot carry, names a
+`secretRef` rather than a value, and writes a bundle the operator commits.
+Depends on #202 for `PortableAgent`.
 
-**2 — Extract a headless lift driver.** A `liftPlan` resolved-options struct and
-a driver that executes the six steps against it, with the existing headless
-pieces. `/lift` is not changed; the driver is new code the TUI could later call.
-~600 lines including tests.
+**3 — `kmx agent lift`.** Resolve bundle → target → prerequisites → render →
+deploy, with the guard, `--plan` and outcome reporting. Depends on 2 and on
+#202's `Render`/`Deploy`.
 
-**3 — `kmx agent lift`.** The Cobra command, flag validation, `--plan`, the
-guard call, outcome reporting. ~500 lines including tests.
+**4 — Point `/lift` at the same path.** Not proposed here, and David's call:
+the TUI would supply the same resolved options from its pickers, removing the
+duplicate sequencing rather than adding a second one.
 
-**4 — Point `/lift` at the driver.** Optional, and David's call: the TUI
-supplies the same resolved options from its pickers. Removes the duplicate
-sequencing rather than adding a second one. Not proposed as part of this work.
-
-Phases 1–3 leave `/lift` untouched.
+Phases 1 to 3 leave `/lift` untouched.
 
 ## Testing
 
@@ -232,44 +299,62 @@ Phases 1–3 leave `/lift` untouched.
 argv, the create/get/delete sequence and that no Secret is deleted. No cluster,
 no terminal.
 
-The same approach covers: flag validation and mutual exclusion; a refusal when
-Orka is absent without `--install-orka`; `--plan` writing nothing; created
-versus reused versus conflict; the guard refusing an unconfirmed remote
-context; and `--inference foundry` refusing with a message naming `/lift`.
+The same approach covers: capture refusing a field the portable format cannot
+carry; capture emitting a `secretRef` and never a value; flag validation and
+mutual exclusion; a refusal when Orka is absent without `--install-orka`;
+`--plan` writing nothing; created versus reused versus conflict; the guard
+refusing an unconfirmed remote context; and `--inference foundry` refusing with
+a message naming `/lift`.
 
 Note that `liftAgent`, `chooseLiftTarget`, `prepareLiftOrka`,
-`selectLiftInference` and `prepareLiftTools` have **no tests today**. Extraction
-is therefore unguarded by existing coverage, and phase 2 must bring its own.
+`selectLiftInference` and `prepareLiftTools` have **no tests today**, so this
+work is unguarded by existing coverage and must bring its own.
 
 ## Open questions
 
-1. **`kmx lift` versus `kmx agent lift`.** One provisions an AKS cluster and
-   installs a platform; the other moves one agent. Same verb, adjacent
-   commands, different objects. `README.md:28` commits to `kmx agent lift`;
-   [#194](https://github.com/kaimahi-agents/kaimahi/issues/194) specifies
-   `render`/`deploy`/`status`/`evaluate` and does not mention lift. Whether this
-   command is `deploy` with target selection folded in, or a distinct
-   composite, is unresolved and is not settled by building it.
-2. **Does v1 refuse Foundry, or accept fully-specified Foundry?** This document
+1. **How does lift know a bundle already exists for a running agent?**
+   *Blocking for the capture-if-absent branch.* If deploy records the portable
+   digest on the Agent, lift can tell. If nothing links them, "capture when
+   missing" is really "always capture", and the command should say so rather
+   than imply a lookup it cannot perform.
+2. **Is capture a flag on lift, a separate `kmx agent capture`, or both?**
+   Separate is more useful — it is the on-ramp into the #194 lifecycle for
+   every agent that exists today — but it is a second command to justify.
+3. **Is lift a verb, or is it `deploy` with a destination?** *Turns on whether
+   `deploy` is single-target.* Deploy assumes a ready destination; lift makes
+   one ready, and confirms because it acts on a cluster that is not the
+   configured one. That justifies a separate verb only while deploy stays
+   single-target: once deploy grows `--to-context` for promotion between
+   environments, lift's remaining content is prerequisite installation.
+   Against a separate verb: #194 does not mention lift, and `kmx lift` already
+   exists taking a different object. For it: `README.md:28` commits to
+   `kmx agent lift` and `scripts/check-readme-front-door.py:36` enforces the
+   line, so reversing is a product decision.
+4. **Does v1 refuse Foundry, or accept fully-specified Foundry?** This document
    proposes refusing. An alternative is accepting an account and deployment
    that already exist while refusing to *create* either. That is a narrower
    refusal and may be the better line.
-3. **Should `/lift` converge on `OrkaReady()`?** Not proposed here, but the two
+5. **Should `/lift` converge on `OrkaReady()`?** Not proposed here, but the two
    definitions should not both survive indefinitely.
 
 ## Rejected alternatives
 
+**Reading the live Agent as the source of truth.** A cluster read has no
+digest, so the deployment it produces cannot be recorded or rolled back to; it
+requires the source cluster to be reachable; and it carries server defaults and
+in-place edits to the destination as though they were the definition.
+
 **A `--yes` flag that answers every prompt.** The Foundry quota flow is a
 search, not a confirmation. There is no correct answer for `--yes` to supply.
 
-**Defaulting `--inference` to keep-source.** A source Provider naming a
-cluster-local Ollama Service resolves to nothing at the destination, and the
-failure arrives at first Task rather than at deploy.
+**Defaulting `--inference` to the bundle's own configuration.** A Provider
+naming a cluster-local Ollama Service resolves to nothing at the destination,
+and the failure arrives at first Task rather than at deploy.
 
 **Bypassing the guard because `/lift` does.** `/lift` earns that through a live
 picker and a review pane naming the destination. A command line has neither.
 
-**Reimplementing the deploy path.** `createOrkaOnline` is already headless and
-already carries schema validation, server admission, reuse comparison and
-generation-aware readiness waits. A second implementation would be the
-behaviour the prime directive exists to prevent.
+**Reimplementing render or deploy.** #202 defines both per target, and
+`createOrkaOnline` already carries schema validation, server admission, reuse
+comparison and generation-aware readiness waits. A second implementation would
+be the behaviour the prime directive exists to prevent.
