@@ -1391,38 +1391,12 @@ func (b *orkaChatBackend) Connect(ctx context.Context, renderer *chatRenderer) (
 
 func (b *orkaChatBackend) Send(ctx context.Context, message string, renderer *chatRenderer) error {
 	renderer.beginAssistant(b.agent)
-	if b.app.chatInference == "copilot" || b.app.chatInference == "foundry" {
-		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
-		raw, err := b.app.orkaCapture(ctx, nil, "-n", b.namespace, "get", "agents.core.orka.ai", b.agent, "-o", "json")
-		if err != nil {
-			return err
-		}
-		instructions, err := b.copilotInstructionsFromAgent(ctx, raw)
-		if err != nil {
-			return err
-		}
-		tools, unavailable, err := b.copilotToolsFromAgent(ctx, raw)
-		if b.app.chatInference == "foundry" {
-			if err != nil {
-				return err
-			}
-			if len(unavailable) > 0 {
-				renderer.assistantOperation(b.agent, "TOOLS", "", colorYellow, "Unavailable in host inference: "+strings.Join(unavailable, ", "))
-			}
-			answer, err := b.foundryTurn(ctx, instructions, message, tools, renderer)
-			if err != nil {
-				return err
-			}
-			renderer.assistant(b.agent, answer, true)
-			return nil
-		}
-		answer, err := b.copilotPreparedTurn(ctx, instructions, message, renderer, tools, unavailable, err)
-		if err != nil {
-			return err
-		}
-		renderer.assistant(b.agent, answer, true)
-		return nil
+	inference, host, err := b.app.hostInferenceStrategy()
+	if err != nil {
+		return err
+	}
+	if host {
+		return b.sendHostTurn(ctx, message, renderer, inference)
 	}
 	var profile *orkaTaskProfile
 	if renderer.verboseEnabled() {

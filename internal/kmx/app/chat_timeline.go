@@ -49,6 +49,7 @@ type chatTimelineModel struct {
 	completionSelected                  bool
 	busy, connecting, verbose, quitting bool
 	command                             string
+	commands                            []slashCommand
 	started                             time.Time
 	err                                 error
 	jobs                                chan<- chatTimelineJob
@@ -73,7 +74,7 @@ func newChatTimeline(agent, kubeContext, initial string, verbose bool) chatTimel
 	history := viewport.New(viewport.WithWidth(80), viewport.WithHeight(13))
 	history.FillHeight = true
 	return chatTimelineModel{editor: input, history: history, agent: agent, kubeContext: kubeContext,
-		initial: initial, verbose: verbose, width: 80, height: 24, recall: 0}
+		initial: initial, verbose: verbose, width: 80, height: 24, recall: 0, commands: commonChatCommands()}
 }
 
 func (m chatTimelineModel) waitEvent() tea.Cmd {
@@ -262,7 +263,7 @@ func (m chatTimelineModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history.GotoBottom()
 			return m, nil
 		}
-		matches := slashMatchesFrom(orkaSlashCommands, m.editor.Value())
+		matches := slashMatchesFrom(m.commands, m.editor.Value())
 		if m.completion >= len(matches) {
 			m.completion = 0
 		}
@@ -321,7 +322,7 @@ func (m chatTimelineModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			case "/help":
 				var commands []string
-				for _, command := range orkaSlashCommands {
+				for _, command := range m.commands {
 					commands = append(commands, command.usage)
 				}
 				m.appendEvent(chatTimelineEvent{kind: "help", label: "CHAT HELP", text: strings.Join(commands, "\n")})
@@ -330,10 +331,6 @@ func (m chatTimelineModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.verbose = message == "/verbose-on"
 				m.appendEvent(chatTimelineEvent{kind: "status-message", label: "CHAT", text: fmt.Sprintf("Verbose: %t", m.verbose)})
 				return m, nil
-			case "/tools", "/agent", "/lift", "/inference", "/inference-copilot", "/inference-local", "/inference-foundry":
-				m.command = message
-				m.quitting = true
-				return m, tea.Quit
 			case "/retry":
 				if m.last == "" {
 					m.appendEvent(chatTimelineEvent{kind: "status-message", label: "CHAT", text: "Retry: no previous message"})
@@ -341,6 +338,11 @@ func (m chatTimelineModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, m.send(m.last)
 			default:
+				if containsChatCommand(m.commands, message) {
+					m.command = message
+					m.quitting = true
+					return m, tea.Quit
+				}
 				if strings.HasPrefix(message, "/") {
 					m.appendEvent(chatTimelineEvent{kind: "error", label: "CHAT", text: "Unknown command. Use /help."})
 					return m, nil
@@ -377,7 +379,7 @@ func (m chatTimelineModel) View() tea.View {
 	header := line("KMX / "+tuiField("agent", m.agent)+" · "+tuiField("location", location)) + "\n" + line(tuiField("inference", " "+inference)) + "\n" + line(tuiField("tools", " "+fields["Tools"])) + "\n" + strings.Repeat("─", width)
 	historyRows := strings.Split(m.history.View(), "\n")
 	// Popup overlays only the history viewport. Header/editor never move.
-	matches := slashMatchesFrom(orkaSlashCommands, m.editor.Value())
+	matches := slashMatchesFrom(m.commands, m.editor.Value())
 	popup := slashPopup(matches, m.completion, max(1, width-1), m.history.Height())
 	if len(popup) > 0 {
 		start := max(0, len(historyRows)-len(popup))
@@ -419,6 +421,7 @@ func (a *App) runChatTimeline(backend interactiveChatBackend, initial string) er
 		kubeContext = a.Cfg.KubeContext
 	}
 	m := newChatTimeline(backend.Agent(), kubeContext, initial, a.chatVerbose)
+	m.commands = chatBackendCommands(backend)
 	for {
 		ctx, stop := context.WithCancel(parent)
 		events := make(chan tea.Msg, 64)
@@ -504,5 +507,6 @@ func (a *App) runChatTimeline(backend interactiveChatBackend, initial string) er
 			m.rebuildHistory(true)
 		}
 		m.agent = backend.Agent()
+		m.commands = chatBackendCommands(backend)
 	}
 }

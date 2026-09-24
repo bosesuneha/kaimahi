@@ -237,28 +237,6 @@ func copilotToolLoop(ctx context.Context, instructions, message string, tools []
 	return "", fmt.Errorf("Copilot exceeded the 8-step tool loop limit")
 }
 
-func (b *orkaChatBackend) copilotPreparedTurn(ctx context.Context, instructions, message string, renderer *chatRenderer, tools []copilotTool, unavailable []string, err error) (string, error) {
-	if err != nil {
-		return "", err
-	}
-	if len(unavailable) > 0 {
-		renderer.assistantOperation(b.agent, "TOOLS", "", colorYellow, "Unavailable in Copilot mode: "+strings.Join(unavailable, ", "))
-	}
-	return copilotToolLoop(ctx, instructions, message, tools, func(ctx context.Context, prompt string) (string, error) {
-		return copilotPromptModel(ctx, b.app.copilotCLI, b.app.copilotModel, prompt)
-	}, func(ctx context.Context, tool copilotTool, args []byte) (string, error) {
-		renderer.assistantOperation(b.agent, "TOOL CALL", tool.Name, colorBlue, "Executing registered HTTP tool")
-		raw, err := b.executeCopilotTool(ctx, tool, args)
-		if err != nil {
-			return "", fmt.Errorf("tool %s failed; no automatic retry: %w", tool.Name, err)
-		}
-		if len(raw) > 32<<10 {
-			return "", fmt.Errorf("tool result exceeds 32 KiB")
-		}
-		return string(raw), nil
-	})
-}
-
 type copilotToolConnection struct {
 	forward *admin.Forward
 	client  *http.Client

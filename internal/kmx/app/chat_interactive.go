@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	agentruntime "github.com/kaimahi-agents/kaimahi/internal/kmx/runtime"
 	"unicode"
 
 	"charm.land/lipgloss/v2"
@@ -531,8 +533,8 @@ func (a *App) runInteractiveChatBackendInitial(backend interactiveChatBackend, i
 		}
 	}
 	renderer.promptHint = "/help  /retry  /exit"
-	renderer.slashCommands = orkaSlashCommands
-	renderer.commandSummary = "/help /retry /exit /tools /agent /lift /inference /inference-foundry /inference-copilot /inference-local /verbose-on /verbose-off"
+	renderer.slashCommands = chatBackendCommands(backend)
+	renderer.commandSummary = chatCommandsSummary(renderer.slashCommands)
 	renderer.working("Connecting to " + backend.Agent())
 	fields, err := backend.Connect(ctx, renderer)
 	if err != nil {
@@ -567,7 +569,11 @@ func (a *App) runInteractiveChatBackendInitial(backend interactiveChatBackend, i
 		}
 		message := strings.TrimSpace(line)
 		renderer.submitted(isInteractiveTerminal(a.Stdin))
-		switch message {
+		commandKey := message
+		if containsChatCommand(renderer.slashCommands, message) && !containsChatCommand(commonChatCommands(), message) {
+			commandKey = "runtime-command"
+		}
+		switch commandKey {
 		case "", "\x1b":
 			if message == "\x1b" {
 				renderer.exit("exit requested")
@@ -578,9 +584,9 @@ func (a *App) runInteractiveChatBackendInitial(backend interactiveChatBackend, i
 			renderer.exit("exit requested")
 			return nil
 		case "/help":
-			renderer.operation("CHAT HELP", "", colorBlue, "Conversation:\n  /retry\n  /exit\n\nAgent:\n  /tools — search and enable Orka tools\n  /agent — connect to another agent (resets chat)\n  /lift — deploy to a kubeconfig or AKS target (j/k navigate, / search)\n\nInference:\n  /inference — choose Foundry, Copilot or Agent Provider\n  /inference-foundry — configure Azure login and host Foundry inference\n  /inference-copilot — choose a discovered Copilot model; KMX HTTP tool adapter\n  /inference-local — Orka Provider and native tool execution\n  /retry — repeat the last prompt on the selected backend\n\nDisplay:\n  /verbose-on\n  /verbose-off")
+			renderer.operation("CHAT HELP", "", colorBlue, chatCommandsHelp(renderer.slashCommands))
 			continue
-		case "/tools", "/agent", "/lift", "/inference", "/inference-copilot", "/inference-local", "/inference-foundry":
+		case "runtime-command":
 			controls, ok := backend.(configurableChatBackend)
 			if !ok {
 				renderer.operation("CHAT", "", colorBlue, "Agent configuration is unavailable for this backend.")
@@ -604,12 +610,7 @@ func (a *App) runInteractiveChatBackendInitial(backend interactiveChatBackend, i
 			if reset {
 				last = ""
 			}
-			refresh := reset
-			switch message {
-			case "/tools", "/agent", "/lift", "/inference", "/inference-copilot", "/inference-local", "/inference-foundry":
-				refresh = true
-			}
-			if refresh {
+			{
 				// Tool-save feedback may already have repainted the sticky header.
 				// Reset its row ownership before clearing/home; otherwise the next
 				// header redraw restores the cursor to row 1 and input overwrites it.
@@ -625,6 +626,7 @@ func (a *App) runInteractiveChatBackendInitial(backend interactiveChatBackend, i
 					renderer.statusSection(field.Label, field.Value)
 				}
 				renderer.statusEnd()
+				renderer.slashCommands = chatBackendCommands(backend)
 			}
 			continue
 		case "/verbose-on", "/verbose-off":
@@ -980,10 +982,15 @@ type streamEvent struct {
 }
 
 func (a *App) interactiveChat(kagent, agent, initialTask, session string) error {
+	return a.runKagentSession(a.operationContext(), &kagentRuntimeSession{app: a, executable: kagent, name: agent, session: session, toolMode: "summary"}, initialTask)
+}
+
+func (a *App) runKagentSession(parent context.Context, adapter *kagentRuntimeSession, initialTask string) error {
+	agent, session := adapter.name, adapter.session
 	if len(agent) > 63 || !agentNameRE.MatchString(agent) {
 		return fmt.Errorf("agent name %q is not a valid Kubernetes name", agent)
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(parent, os.Interrupt)
 	defer cancel()
 	renderer := newChatRenderer(a.Out)
 	renderer.verbose = a.chatVerbose
@@ -995,28 +1002,24 @@ func (a *App) interactiveChat(kagent, agent, initialTask, session string) error 
 	renderer.enterFullScreen()
 	defer renderer.leaveFullScreen()
 	renderer.working("Connecting to " + agent)
-	if err := a.waitServable(agent); err != nil {
-		return err
-	}
-	port, stop, err := a.portForward()
-	if err != nil {
-		return err
-	}
-	defer stop()
-	base := "http://127.0.0.1:" + port
 	toolMode := "summary"
-	posture, err := a.refreshChatPosture(agent, renderer)
-	if err != nil {
+	adapter.renderer = renderer
+	defer adapter.Close()
+	if _, err := adapter.Connect(ctx, emitToRenderer(renderer)); err != nil {
 		return err
 	}
-	if session != "" {
-		if err := a.showSessionHistory(base, session, agent, toolMode, renderer); err != nil {
-			return err
-		}
-	}
+	base, posture := adapter.base, adapter.posture
 
 	reader := bufio.NewScanner(a.Stdin)
 	input := newChatInput(reader, a.Stdin, a.Out, renderer)
+	adapter.decide = func(ctx context.Context, view *streamView, r *chatRenderer) (*streamView, error) {
+		decision, err := a.promptHITL(ctx, input, view.approval, r)
+		if err != nil {
+			adapter.decisionFailure = true
+			return view, err
+		}
+		return a.sendHITL(ctx, adapter.base, agent, view, decision, adapter.toolMode, r, adapter.posture)
+	}
 	last := ""
 	for {
 		if err := ctx.Err(); err != nil {
@@ -1160,15 +1163,25 @@ func (a *App) interactiveChat(kagent, agent, initialTask, session string) error 
 			last = message
 		}
 		started := time.Now()
-		renderer.beginAssistant(agent)
-		if posture.modelGoverned {
-			renderer.assistantOperation(agent, "KAIMAHI ROUTE", "", colorYellow, "Seam: model proxy\nConfiguration: verified through ready plane at chat start\nPer-call decision: not exposed by kagent stream")
-		}
-		view, err := a.invokeStream(ctx, kagent, base, agent, message, session, toolMode, renderer, posture)
-		if view != nil && view.context != "" {
-			session = view.context
-		}
+		adapter.session, adapter.toolMode, adapter.posture = session, toolMode, posture
+		err := adapter.Send(ctx, agentruntime.Turn{Message: message, Verbose: renderer.verboseEnabled()}, emitToRenderer(renderer))
+		session = adapter.session
 		if err != nil {
+			if adapter.approvalFailure {
+				if renderer.ui.Rich() && adapter.decisionFailure && (errors.Is(err, io.EOF) || errors.Is(err, context.Canceled)) {
+					reason := "end of input; no decision submitted"
+					if errors.Is(err, context.Canceled) {
+						reason = "cancelled; no decision submitted"
+					}
+					renderer.exit(reason)
+					return nil
+				}
+				if renderer.ui.Rich() && ctx.Err() != nil {
+					renderer.exit("cancelled")
+					return nil
+				}
+				return err
+			}
 			if renderer.ui.Rich() && ctx.Err() != nil {
 				renderer.exit("cancelled")
 				return nil
@@ -1179,34 +1192,6 @@ func (a *App) interactiveChat(kagent, agent, initialTask, session string) error 
 			renderer.finish()
 			fmt.Fprintf(a.Err, "chat: %s\n", safeTerminal(err.Error()))
 			continue
-		}
-		for view.approval != nil {
-			if view.approvalErr != nil {
-				return view.approvalErr
-			}
-			decision, err := a.promptHITL(ctx, input, view.approval, renderer)
-			if err != nil {
-				if renderer.ui.Rich() && (errors.Is(err, io.EOF) || errors.Is(err, context.Canceled)) {
-					reason := "end of input; no decision submitted"
-					if errors.Is(err, context.Canceled) {
-						reason = "cancelled; no decision submitted"
-					}
-					renderer.exit(reason)
-					return nil
-				}
-				return err
-			}
-			view, err = a.sendHITL(ctx, base, agent, view, decision, toolMode, renderer, posture)
-			if view != nil && view.context != "" {
-				session = view.context
-			}
-			if err != nil {
-				if renderer.ui.Rich() && ctx.Err() != nil {
-					renderer.exit("cancelled")
-					return nil
-				}
-				return err
-			}
 		}
 		renderer.responseTime(time.Since(started))
 		renderer.finish()

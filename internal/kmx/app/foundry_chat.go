@@ -208,7 +208,10 @@ func (c *foundryChatClient) complete(ctx context.Context, messages []foundryMess
 }
 
 func (b *orkaChatBackend) foundryTurn(ctx context.Context, instructions, message string, tools []copilotTool, r *chatRenderer) (string, error) {
-	client := b.app.foundryClient
+	return runFoundryTurn(ctx, b.app.foundryClient, instructions, message, tools, b.executeCopilotTool, r, b.agent)
+}
+
+func runFoundryTurn(ctx context.Context, client *foundryChatClient, instructions, message string, tools []copilotTool, execute hostToolExecutor, r *chatRenderer, agent string) (string, error) {
 	if client == nil {
 		return "", fmt.Errorf("configure Foundry with /inference-foundry")
 	}
@@ -229,7 +232,7 @@ func (b *orkaChatBackend) foundryTurn(ctx context.Context, instructions, message
 				return "", fmt.Errorf("Foundry returned no answer")
 			}
 			if r.verboseEnabled() {
-				r.assistantOperation(b.agent, "TIMING", "", colorBlue, fmt.Sprintf("Foundry model/auth/network: %s; tools: %s; turn: %s", modelTime.Round(time.Millisecond), toolTime.Round(time.Millisecond), time.Since(started).Round(time.Millisecond)))
+				r.assistantOperation(agent, "TIMING", "", colorBlue, fmt.Sprintf("Foundry model/auth/network: %s; tools: %s; turn: %s", modelTime.Round(time.Millisecond), toolTime.Round(time.Millisecond), time.Since(started).Round(time.Millisecond)))
 			}
 			return safeTerminal(reply.Content), nil
 		}
@@ -260,9 +263,9 @@ func (b *orkaChatBackend) foundryTurn(ctx context.Context, instructions, message
 			if json.Unmarshal([]byte(call.Function.Arguments), &args) != nil || selected.schema.Validate(args) != nil {
 				return "", fmt.Errorf("Foundry tool arguments failed schema validation")
 			}
-			r.assistantOperation(b.agent, "TOOL CALL", selected.Name, colorBlue, "Executing registered HTTP tool")
+			r.assistantOperation(agent, "TOOL CALL", selected.Name, colorBlue, "Executing registered HTTP tool")
 			s = time.Now()
-			result, err := b.executeCopilotTool(ctx, *selected, []byte(call.Function.Arguments))
+			result, err := execute(ctx, *selected, []byte(call.Function.Arguments))
 			toolTime += time.Since(s)
 			if err != nil {
 				return "", err

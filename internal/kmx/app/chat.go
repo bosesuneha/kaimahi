@@ -72,7 +72,7 @@ func (a *App) ChatWithOptions(opt ChatOptions) error {
 	if opt.AzureDiscovery != "" {
 		a.azureDiscoveryMode = opt.AzureDiscovery
 	}
-	if opt.Runtime != "" && opt.Runtime != "auto" && opt.Runtime != "orka" && opt.Runtime != "kagent" {
+	if opt.Runtime != "" && opt.Runtime != "auto" && !a.registeredChatRuntime(opt.Runtime) {
 		return fmt.Errorf("unknown chat runtime %q; use auto, orka or kagent", opt.Runtime)
 	}
 	if opt.AzureDiscovery != "" && opt.AzureDiscovery != "cli" && opt.AzureDiscovery != "sdk" {
@@ -117,15 +117,11 @@ func (a *App) ChatWithOptions(opt ChatOptions) error {
 		if err != nil {
 			return err
 		}
-		if runtime == "orka" {
-			if opt.Session != "" {
-				return fmt.Errorf("--session is kagent-specific; Orka chat uses fresh Tasks")
-			}
-			if a.chatJSON {
-				return fmt.Errorf("--interactive and --json cannot be used together")
-			}
-			return a.runInteractiveChatBackendInitial(&orkaChatBackend{app: a, agent: agent, namespace: namespace}, opt.Task)
+		if a.chatJSON {
+			return fmt.Errorf("--interactive and --json cannot be used together")
 		}
+		opt.Runtime = runtime
+		return a.openRuntimeChat(opt, agent, namespace)
 	}
 
 	out, status, err := a.askAgent(agent, task, opt.Session, opt.Interactive, ChatRetryable)

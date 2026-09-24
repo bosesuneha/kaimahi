@@ -188,6 +188,10 @@ type switchingChatBackend struct {
 func (b *switchingChatBackend) Configure(context.Context, string, *chatRenderer) (bool, error) {
 	return true, nil
 }
+
+func (b *switchingChatBackend) ChatCommands() []slashCommand {
+	return append(commonChatCommands(), slashCommand{name: "/agent", usage: "/agent — switch test agent"})
+}
 func (b *switchingChatBackend) Connect(ctx context.Context, renderer *chatRenderer) ([]cliui.Field, error) {
 	b.connections++
 	return b.staticChatBackend.Connect(ctx, renderer)
