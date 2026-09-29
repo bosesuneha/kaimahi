@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	agentruntime "github.com/kaimahi-agents/kaimahi/internal/kmx/runtime"
 	"github.com/kaimahi-agents/kaimahi/internal/kmx/secretshapes"
 )
 
@@ -733,5 +734,90 @@ func TestConsoleBundleDiffTreatsTheBundlePathLiterally(t *testing.T) {
 	}
 	if strings.Contains(joined, "x1\n") || strings.Contains(joined, "edited x1") {
 		t.Fatalf("a sibling directory's change was drawn as this bundle's:\n%s", joined)
+	}
+}
+
+// The pane shows the evaluation status records for the row's own target: the
+// same value `kmx agent status` reports, read from the same receipt.
+func TestConsoleBundleShowsTheEvaluationStatusRecords(t *testing.T) {
+	for _, want := range []string{consoleBundleEvaluationPass, consoleBundleEvaluationFail} {
+		t.Run(want, func(t *testing.T) {
+			a, root, bundle, _, name, _, seed := consoleBundleFixture(t)
+			if err := seed(); err != nil {
+				t.Fatal(err)
+			}
+			source, err := os.ReadFile(filepath.Join(bundle, "agent.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt := bundleEvaluationReceipt{
+				Bundle: name, PortableDigest: agentruntime.PortableBundleDigest(source), CasesDigest: currentBundleCasesDigest(bundle), Result: want,
+				Target: bundleEvaluationTarget{Runtime: agentruntime.Orka, Context: "kind-test", Namespace: "orka-system", Agent: name, AgentUID: "agent-uid"},
+			}
+			if err := writeBundleEvaluationReceipt(bundle, "cluster-uid", receipt); err != nil {
+				t.Fatal(err)
+			}
+			snapshot := a.consoleBundleStatus(t.Context(), consoleBundleEnv(), consoleBundleRow(name), root)
+			if snapshot.Target == nil || snapshot.Target.State != bundleStateInSync || snapshot.Target.Evaluation != want {
+				t.Fatalf("target = %+v (Err %q), want in sync with evaluation %q", snapshot.Target, snapshot.Err, want)
+			}
+			p := &consoleBundlePane{env: consoleBundleEnv(), agent: consoleBundleRow(name), snapshot: snapshot}
+			text := ansi.Strip(strings.Join(p.lines(200), "\n"))
+			if !strings.Contains(text, "Evaluated: "+want+" ·") {
+				t.Fatalf("the evaluation is not shown:\n%s", text)
+			}
+		})
+	}
+}
+
+// Every evaluation value is printed as its word plus what it means, and the
+// guidance under it follows from the state and the result together.
+func TestConsoleBundleExplainsEachEvaluationResult(t *testing.T) {
+	found := bundleResourceStatus{Found: true, Ready: true}
+	for _, tc := range []struct {
+		name, state, evaluation string
+		want, avoid             []string
+	}{
+		{"in sync, passed", bundleStateInSync, consoleBundleEvaluationPass,
+			[]string{"Evaluated: pass · every case passed", "cases passed against this revision"},
+			[]string{"not proof the agent answers"}},
+		{"in sync, failed", bundleStateInSync, consoleBundleEvaluationFail,
+			[]string{"Evaluated: fail · at least one case failed", "kmx agent evaluate agents/sample --to-context kind-test"}, nil},
+		{"in sync, unobserved", bundleStateInSync, consoleBundleEvaluationUnknown,
+			[]string{"Evaluated: unknown · an evaluation ran, but its outcome could not be observed"}, nil},
+		{"in sync, never evaluated", bundleStateInSync, consoleBundleEvaluationNone,
+			[]string{"Evaluated: none · no evaluation recorded", "not proof the agent answers", "kmx agent evaluate agents/sample --to-context kind-test"}, nil},
+		{"behind", bundleStateBehind, consoleBundleEvaluationNone,
+			[]string{"Evaluation results belong to one revision. After lifting"}, nil},
+		{"drifted after an evaluation", bundleStateDrifted, consoleBundleEvaluationPass,
+			[]string{"Evaluated: pass", "may not describe what is running now"}, nil},
+		{"drifted, never evaluated", bundleStateDrifted, consoleBundleEvaluationNone,
+			nil, []string{"may not describe what is running now"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &consoleBundlePane{env: consoleBundleEnv(), agent: consoleBundleRow("sample"), snapshot: consoleBundleSnapshot{
+				Dir: "agents/sample", Target: &bundleTargetStatus{State: tc.state, Evaluation: tc.evaluation, Provider: found, Agent: found}}}
+			text := ansi.Strip(strings.Join(p.lines(400), "\n"))
+			for _, want := range tc.want {
+				if !strings.Contains(text, want) {
+					t.Errorf("missing %q in:\n%s", want, text)
+				}
+			}
+			for _, avoid := range tc.avoid {
+				if strings.Contains(text, avoid) {
+					t.Errorf("unexpected %q in:\n%s", avoid, text)
+				}
+			}
+		})
+	}
+}
+
+// An evaluation belongs to a deployed revision, so a target with no Agent has
+// no evaluation row, even though status reports none for it.
+func TestConsoleBundleOmitsEvaluationWhereNothingIsDeployed(t *testing.T) {
+	p := &consoleBundlePane{env: consoleBundleEnv(), agent: consoleBundleRow("sample"), snapshot: consoleBundleSnapshot{
+		Dir: "agents/sample", Target: &bundleTargetStatus{State: bundleStateNotDeployed, Evaluation: consoleBundleEvaluationNone}}}
+	if text := ansi.Strip(strings.Join(p.lines(200), "\n")); strings.Contains(text, "Evaluated:") {
+		t.Fatalf("an evaluation row was shown with nothing deployed:\n%s", text)
 	}
 }

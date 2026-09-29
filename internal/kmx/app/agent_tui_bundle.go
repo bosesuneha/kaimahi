@@ -454,13 +454,26 @@ func (p *consoleBundlePane) lines(inner int) []string {
 	if t.Provider.Found || t.Agent.Found {
 		field("Ready", fmt.Sprintf("Provider %s · Agent %s", yesNo(t.Provider.Ready), yesNo(t.Agent.Ready)), value)
 	}
+	// Evaluation belongs to a deployed revision, so it is shown only where
+	// there is one. Status decides the value; the pane only explains it.
+	if t.Agent.Found && t.Evaluation != "" {
+		field("Evaluated", consoleBundleEvaluationText(t.Evaluation), consoleBundleEvaluationStyle(t.Evaluation, muted))
+	}
 	rows = append(rows, "")
 
 	file := filepath.Join(p.snapshot.Dir, "agent.yaml")
+	evaluate := fmt.Sprintf("kmx agent evaluate %s --to-context %s", p.snapshot.Dir, p.env.Name)
 	switch t.State {
 	case bundleStateInSync:
 		text("What is running matches "+file+".", value, 0)
-		text("A matching definition is not proof the agent answers; run a Task or evaluation for that.", muted, 0)
+		switch t.Evaluation {
+		case consoleBundleEvaluationPass:
+			text("Its evaluation cases passed against this revision on this cluster.", muted, 0)
+		case consoleBundleEvaluationFail, consoleBundleEvaluationUnknown:
+			text("Run "+evaluate+" to see each case and its answer.", muted, 0)
+		default:
+			text("A matching definition is not proof the agent answers. Run "+evaluate+" to check it.", muted, 0)
+		}
 	case bundleStateBehind:
 		rows = append(rows, label.Render("What kmx agent lift would change"))
 		if t.DeployedCommit != "" {
@@ -474,6 +487,10 @@ func (p *consoleBundlePane) lines(inner int) []string {
 			rows = append(rows, "")
 			text(p.snapshot.DiffNote, muted, 0)
 		}
+		// Status only reports an evaluation for the revision agent.yaml
+		// defines now, so a behind target never has one to show.
+		rows = append(rows, "")
+		text("Evaluation results belong to one revision. After lifting, run "+evaluate+" to evaluate the new one.", muted, 0)
 	case bundleStateDrifted:
 		text("These live fields changed after the last lift:", value, 0)
 		for _, path := range t.ChangedFields {
@@ -481,6 +498,12 @@ func (p *consoleBundlePane) lines(inner int) []string {
 		}
 		rows = append(rows, "")
 		text("Values are not shown: live objects are untrusted and may hold credentials. Lifting "+p.snapshot.Dir+" again re-applies the definition.", muted, 0)
+		// An evaluation receipt is keyed to the revision and the live Agent's
+		// identity, not to its fields, and a live edit changes neither. The
+		// pane cannot tell whether the evaluation ran before or after it.
+		if t.Evaluation == consoleBundleEvaluationPass || t.Evaluation == consoleBundleEvaluationFail || t.Evaluation == consoleBundleEvaluationUnknown {
+			text("The evaluation result does not record which fields were live when it ran, so it may not describe what is running now.", muted, 0)
+		}
 	case bundleStateNotDeployed:
 		text("Nothing named "+p.agent.Name+" is deployed in "+p.agent.Namespace+" on this cluster. Lift the bundle to deploy it.", value, 0)
 	case bundleStateForeign:
@@ -522,6 +545,45 @@ func consoleBundleDiffView(diff []string, inner int) []string {
 	return rows
 }
 
+// The evaluation words status reports for a target. They are status's own
+// values, compared as strings because status publishes them as strings.
+const (
+	consoleBundleEvaluationPass    = "pass"
+	consoleBundleEvaluationFail    = "fail"
+	consoleBundleEvaluationUnknown = "unknown"
+	consoleBundleEvaluationNone    = "none"
+)
+
+// consoleBundleEvaluationText keeps the word status reports and adds what it
+// means, so the pane never shows a bare word an operator has to look up.
+func consoleBundleEvaluationText(evaluation string) string {
+	switch evaluation {
+	case consoleBundleEvaluationPass:
+		return "pass · every case passed for this revision on this cluster"
+	case consoleBundleEvaluationFail:
+		return "fail · at least one case failed for this revision on this cluster"
+	case consoleBundleEvaluationUnknown:
+		return "unknown · an evaluation ran, but its outcome could not be observed"
+	case consoleBundleEvaluationNone:
+		return "none · no evaluation recorded for this revision, cluster and case set"
+	}
+	return evaluation
+}
+
+// consoleBundleEvaluationStyle colours an evaluation by what it asks of the
+// operator. The word is always printed, so colour never carries it alone.
+func consoleBundleEvaluationStyle(evaluation string, muted lipgloss.Style) lipgloss.Style {
+	switch evaluation {
+	case consoleBundleEvaluationPass:
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Green)
+	case consoleBundleEvaluationFail:
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Red)
+	case consoleBundleEvaluationUnknown:
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Yellow)
+	}
+	return muted
+}
+
 func yesNo(ok bool) string {
 	if ok {
 		return "yes"
@@ -540,6 +602,7 @@ func agentTUIDemoBundle(env agentTUIEnvironment, agent agentTUIAgent) consoleBun
 	switch {
 	case env.Local && agent.Name == "assistant":
 		base.State, base.DeployedCommit, base.Behind = bundleStateBehind, "3f9c2e1", 2
+		base.Evaluation = consoleBundleEvaluationNone // status has none for a behind revision
 		return consoleBundleSnapshot{Dir: dir, Target: &base, Diff: []string{
 			"@@ -4,5 +4,7 @@ metadata:",
 			" spec:",
@@ -559,10 +622,12 @@ func agentTUIDemoBundle(env agentTUIEnvironment, agent agentTUIAgent) consoleBun
 		// Objects created before ownership markers existed: found and
 		// ready, but not bundle-owned.
 		base.State, base.Detail = bundleStateUnknown, "missing ownership marker"
+		base.Evaluation = consoleBundleEvaluationNone
 		base.Provider.Marked, base.Agent.Marked = false, false
 		return consoleBundleSnapshot{Dir: dir, Target: &base}
 	default:
 		base.State, base.DeployedCommit = bundleStateDrifted, "3f9c2e1"
+		base.Evaluation = consoleBundleEvaluationPass
 		base.ChangedFields = []string{"Agent.spec.systemPrompt.inline", "Provider.spec.defaultModel"}
 		return consoleBundleSnapshot{Dir: dir, Target: &base}
 	}

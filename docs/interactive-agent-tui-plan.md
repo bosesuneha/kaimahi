@@ -181,10 +181,19 @@ context, kubeconfig and namespace, and draws that target's state:
 
 | State | The pane shows |
 |---|---|
-| `in sync` | That the running definition matches `agent.yaml`. A match is not proof the agent answers. |
+| `in sync` | That the running definition matches `agent.yaml`. Without a passing evaluation, a match is not proof the agent answers, and the pane names the `kmx agent evaluate` command to check it. |
 | `behind` | What `kmx agent lift` would change: a diff of `agent.yaml` from the deployed commit to the working copy, including uncommitted edits, because the working copy is what lift reads. |
 | `drifted` | The live field paths that changed after the last lift. Values are not shown. |
 | `not deployed`, `belongs to another bundle`, `target changed`, `unknown` | What the state means and what to do. `unknown` says plainly that it is not the same as in sync. |
+
+Where an Agent is deployed, the pane also shows its **evaluation**: the `pass`,
+`fail`, `unknown` or `none` that `kmx agent status` reports in its `EVAL`
+column, with what the word means. It is read from the same receipt, so it has
+the same limits: a result counts only for the revision `agent.yaml` defines
+now, on this cluster, for the live Agent and the current `eval/` cases, so a
+behind target always shows `none`. A drifted target with a recorded result
+says the result may not describe what is running, because a receipt does not
+record which fields were live when it ran. The pane never runs a case.
 
 **The diff comes from Git, never the cluster.** Status treats live values as
 untrusted and never shows them, and the pane keeps that rule: a drifted target
