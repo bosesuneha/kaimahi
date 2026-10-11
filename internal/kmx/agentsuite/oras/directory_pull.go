@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	spec "github.com/kaimahi-agents/kaimahi/agentsuite"
 	"github.com/kaimahi-agents/kaimahi/internal/kmx/agentsuite"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
@@ -25,7 +26,7 @@ type PullResult struct {
 	Path       string
 	Reference  string
 	Descriptor ocispec.Descriptor
-	Report     *agentsuite.Report
+	Report     *spec.Report
 	// Provenance is informational and never blocks a pull.
 	Provenance []Provenance
 	// ProvenanceChecked is false if referrers could not be listed.
@@ -170,7 +171,7 @@ func contentLayerDescriptor(
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("decode AgentSuite manifest: %w", err)
 	}
-	if len(manifest.Layers) != 1 || manifest.Layers[0].MediaType != agentsuite.MediaTypeContent {
+	if len(manifest.Layers) != 1 || manifest.Layers[0].MediaType != spec.MediaTypeContent {
 		return ocispec.Descriptor{}, errors.New("AgentSuite manifest must contain exactly one content layer")
 	}
 	return manifest.Layers[0], nil
