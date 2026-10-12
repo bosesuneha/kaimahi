@@ -27,6 +27,12 @@ to do. Sections: **Added**, **Changed**, **Fixed**, **Breaking**, **Upgrading**.
 - Registry `kmx suite push` attaches provenance by default, and `suite pull` shows the claimed kmx version and source commit when available; `--require-provenance` refuses to move the tag if attachment fails.
   Provenance is unsigned: anyone with push access can attach a claim. [Suite provenance](docs/kmx.md#suite-provenance).
 
+### Fixed
+
+- `kmx targets --detect` accepts kubectl's `kind: List` Deployment responses,
+  reporting empty lists as absent and labelled controllers as present. Malformed
+  responses and failed reads remain unreadable and exit nonzero.
+
 ## v0.5.0 — 2026-10-11
 
 ### Added
