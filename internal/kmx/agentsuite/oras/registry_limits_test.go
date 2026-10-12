@@ -1,10 +1,12 @@
 package oras
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	godigest "github.com/opencontainers/go-digest"
+	specs "github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
@@ -164,6 +167,174 @@ func TestRegistryPushOversizedFallbackIndex(t *testing.T) {
 				t.Fatalf("optional push: provenance=%+v warnings=%q, want metadata limit warning", pushed.Provenance, pushed.Warnings)
 			}
 		})
+	}
+}
+
+func TestRegistryPushReferrerIndexGrowthPreservesExistingIndex(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		require     bool
+		changeSuite bool
+	}{
+		{"optional replacement", false, true},
+		{"required replacement", true, true},
+		{"required same-digest repair", true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("DOCKER_CONFIG", t.TempDir())
+			fixtureServer, registry := newTestRegistryServer("", "")
+			fixtureServer.Close()
+			var indexPuts, deletes atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut && r.Header.Get("Content-Type") == ocispec.MediaTypeImageIndex {
+					indexPuts.Add(1)
+				}
+				if r.Method == http.MethodDelete {
+					deletes.Add(1)
+				}
+				registry.ServeHTTP(w, r)
+			}))
+			defer server.Close()
+			source := filepath.Join(t.TempDir(), "source")
+			copyDirectory(t, filepath.Join("..", "..", "..", "..", "agentsuite", "testdata", "minimal"), source)
+			reference := strings.TrimPrefix(server.URL, "http://") + "/team/suite:v1"
+			previous, err := PushRegistry(context.Background(), source, reference, true, false, PushOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.changeSuite {
+				if err := os.WriteFile(filepath.Join(source, "extra.txt"), []byte("changed suite content"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			packedRoot, _, packed, err := packDirectory(context.Background(), source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(packedRoot)
+			// Descriptor annotations survive ORAS index regeneration. Padding the
+			// index itself would disappear and would not reproduce output growth.
+			index := ocispec.Index{
+				Versioned: specs.Versioned{SchemaVersion: 2},
+				MediaType: ocispec.MediaTypeImageIndex,
+				Manifests: []ocispec.Descriptor{
+					{MediaType: ocispec.MediaTypeImageManifest, ArtifactType: "application/vnd.example.foreign+json", Digest: godigest.FromString("foreign one"), Size: 1, Annotations: map[string]string{"padding": ""}},
+					{MediaType: ocispec.MediaTypeImageManifest, ArtifactType: "application/vnd.example.foreign+json", Digest: godigest.FromString("foreign two"), Size: 1},
+				},
+			}
+			indexBytes, err := json.Marshal(index)
+			if err != nil {
+				t.Fatal(err)
+			}
+			index.Manifests[0].Annotations["padding"] = strings.Repeat("x", 1048476-len(indexBytes))
+			indexBytes, err = json.Marshal(index)
+			if err != nil || len(indexBytes) != 1048476 || !json.Valid(indexBytes) {
+				t.Fatalf("near-limit index: size=%d error=%v", len(indexBytes), err)
+			}
+			indexTag := "sha256-" + packed.Descriptor.Digest.Encoded()
+			indexDigest := contentDigest(indexBytes)
+			storedIndex := testManifest{contentType: ocispec.MediaTypeImageIndex, content: indexBytes, digest: indexDigest}
+			registry.mu.Lock()
+			registry.manifests[registryKey("team/suite", indexTag)] = storedIndex
+			registry.manifests[registryKey("team/suite", indexDigest)] = storedIndex
+			registry.mu.Unlock()
+			options := PushOptions{Provenance: &ProvenanceOptions{BuilderVersion: "v1", Require: test.require}}
+			pushed, pushErr := PushRegistry(context.Background(), source, reference, true, true, options)
+			registry.mu.RLock()
+			currentTag := registry.manifests[registryKey("team/suite", "v1")].digest
+			currentIndex := registry.manifests[registryKey("team/suite", indexTag)]
+			originalIndex := registry.manifests[registryKey("team/suite", indexDigest)]
+			registry.mu.RUnlock()
+			if currentIndex.digest != indexDigest || !bytes.Equal(currentIndex.content, indexBytes) || !bytes.Equal(originalIndex.content, indexBytes) {
+				t.Errorf("existing foreign referrers index changed: tagged size=%d digest=%s, want size=1048476 digest=%s", len(currentIndex.content), currentIndex.digest, indexDigest)
+			}
+			if indexPuts.Load() != 0 || deletes.Load() != 0 {
+				t.Errorf("overflow reached registry: index PUTs=%d DELETEs=%d", indexPuts.Load(), deletes.Load())
+			}
+			if test.require {
+				if currentTag != previous.Descriptor.Digest.String() {
+					t.Errorf("required provenance failure moved suite tag: %s -> %s", previous.Descriptor.Digest, currentTag)
+				}
+				if pushErr == nil || !strings.Contains(pushErr.Error(), "registry index size") || !strings.Contains(pushErr.Error(), "exceeds 1048576 bytes") || !strings.Contains(pushErr.Error(), "tag was not changed") {
+					t.Errorf("required push error = %v, want index output size refusal with unchanged tag", pushErr)
+				}
+			} else {
+				if pushErr != nil || currentTag != packed.Descriptor.Digest.String() || currentTag == previous.Descriptor.Digest.String() {
+					t.Errorf("optional push: tag=%s error=%v, want suite tag moved", currentTag, pushErr)
+				}
+				if pushed.Provenance != nil || len(pushed.Warnings) != 1 || !strings.Contains(pushed.Warnings[0], "not attached") || !strings.Contains(pushed.Warnings[0], "exceeds 1048576 bytes") {
+					t.Errorf("optional push: provenance=%+v warnings=%q, want index output size warning", pushed.Provenance, pushed.Warnings)
+				}
+			}
+			// Check the prospective suite by digest even when its required tag
+			// update was refused: the old index must remain readable and checked.
+			digestReference := strings.TrimSuffix(reference, ":v1") + "@" + packed.Descriptor.Digest.String()
+			pulled, err := PullRegistry(context.Background(), digestReference, filepath.Join(t.TempDir(), "output"), true)
+			if err != nil || !pulled.ProvenanceChecked || len(pulled.Warnings) != 0 || len(pulled.Provenance) != 0 {
+				t.Errorf("pull after refused index growth: checked=%t provenance=%+v warnings=%q error=%v", pulled.ProvenanceChecked, pulled.Provenance, pulled.Warnings, err)
+			}
+		})
+	}
+}
+
+func TestRegistryIndexWriteSizeBoundary(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "remote.example"} {
+		for _, test := range []struct {
+			name      string
+			mediaType string
+			size      int
+			refused   bool
+		}{
+			{"limit", ocispec.MediaTypeImageIndex, 1048576, false},
+			{"overflow", ocispec.MediaTypeImageIndex, 1048577, true},
+			{"non-index", ocispec.MediaTypeImageManifest, 1048577, false},
+		} {
+			t.Run(host+"/"+test.name, func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					if _, err := io.Copy(io.Discard, r.Body); err != nil {
+						t.Error(err)
+					}
+					w.WriteHeader(http.StatusCreated)
+				}))
+				defer server.Close()
+				repository, _, err := newRegistryRepository(host+"/team:v1", true, credentials.NewMemoryStore())
+				if err != nil {
+					t.Fatal(err)
+				}
+				routeRegistryClient(t, repository.Client, server)
+				bodyPath := filepath.Join(t.TempDir(), "index-body")
+				if err := os.WriteFile(bodyPath, bytes.Repeat([]byte("x"), test.size), 0600); err != nil {
+					t.Fatal(err)
+				}
+				body, err := os.Open(bodyPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer body.Close()
+				req, err := http.NewRequest(http.MethodPut, "http://"+host+"/v2/team/manifests/sha256-index", body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.ContentLength = int64(test.size)
+				req.Header.Set("Content-Type", test.mediaType)
+				resp, err := repository.Client.Do(req)
+				if resp != nil {
+					resp.Body.Close()
+				}
+				if test.refused {
+					if err == nil || !strings.Contains(err.Error(), "registry index size 1048577 exceeds 1048576 bytes") || requests.Load() != 0 {
+						t.Errorf("index overflow: requests=%d error=%v, want size refusal before sending", requests.Load(), err)
+					}
+					if _, err := body.Stat(); !errors.Is(err, os.ErrClosed) {
+						t.Errorf("refused request body was not closed: %v", err)
+					}
+				} else if err != nil || requests.Load() != 1 || resp == nil || resp.StatusCode != http.StatusCreated {
+					t.Errorf("allowed write: requests=%d response=%v error=%v", requests.Load(), resp, err)
+				}
+			})
+		}
 	}
 }
 

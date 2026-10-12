@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/kaimahi-agents/kaimahi/internal/kmx/agentsuite"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	oraslib "oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry"
@@ -224,6 +225,14 @@ func (t *registryTransport) RoundTrip(req *http.Request) (*http.Response, error)
 			req.Body.Close()
 		}
 		return nil, fmt.Errorf("refusing credentials over plain HTTP to non-loopback host %q; use HTTPS for authenticated registry access", req.URL.Host)
+	}
+	// ORAS sets the generated index's known size but does not bound its PUT.
+	// Refuse growth before replacing an index that our own pull can still read.
+	if req.Method == http.MethodPut && strings.Contains(req.URL.Path, "/manifests/") && req.Header.Get("Content-Type") == ocispec.MediaTypeImageIndex && req.ContentLength > maxProvenanceObjectBytes {
+		if req.Body != nil {
+			req.Body.Close()
+		}
+		return nil, fmt.Errorf("registry index size %d exceeds %d bytes: %w", req.ContentLength, maxProvenanceObjectBytes, errdef.ErrSizeExceedsLimit)
 	}
 	base := t.base
 	if base == nil {
