@@ -21,10 +21,12 @@ import (
 )
 
 // LiftAgentBundleOptions selects a bundle and a destination independent of
-// kubeconfig's current context. Omitted target and inference reuse only a
-// previous successful lift of this exact local bundle path.
+// kubeconfig's current context. Orka can reuse a successful lift's target and
+// inference for this exact local bundle path; Kagent requires explicit context
+// and version, with destination inputs supplied by KagentBindings.
 type LiftAgentBundleOptions struct {
 	BundleDir, ToContext, ToNamespace, Inference string
+	Runtime, RuntimeVersion, Bindings            string
 	RequireEvaluated, OverrideGate               string
 	Plan                                         bool
 }
@@ -43,9 +45,17 @@ type bundleLiftReceipt struct {
 	GateFailedCondition string                     `json:"gateFailedCondition,omitempty"`
 }
 
-// LiftAgentBundle deploys only an Orka portable agent.yaml. In particular it
-// does not copy a source Provider, credentials or Tasks from another cluster.
+// LiftAgentBundle dispatches portable agent.yaml to Orka reconciliation by
+// default or explicit Kagent create-only lift. Neither copies credentials or
+// Tasks from another cluster; Orka derives bindings from a destination Provider,
+// while Kagent reads author-owned KagentBindings.
 func (a *App) LiftAgentBundle(opt LiftAgentBundleOptions) error {
+	if err := validateBundleRuntime(opt.Runtime, opt.RuntimeVersion, opt.Bindings); err != nil {
+		return err
+	}
+	if opt.Runtime == "kagent" {
+		return a.liftKagentBundle(opt)
+	}
 	ctx := a.operationContext()
 	if a.Cfg == nil || a.Run == nil {
 		return fmt.Errorf("lift requires configured kubectl and streams")
@@ -323,13 +333,13 @@ func (a *App) liftPrerequisites(ctx context.Context, namespace string) error {
 		return err // Without CRD discovery, other cluster reads may be untrustworthy.
 	}
 	if len(missing) > 0 {
-		gaps = append(gaps, fmt.Errorf("missing Orka CRDs (%s); prepare destination with kmx orka install (or kmx aks up for a new cluster)", strings.Join(missing, ", ")))
+		gaps = append(gaps, fmt.Errorf("missing Orka CRDs (%s); prepare destination with %s", strings.Join(missing, ", "), a.operationCommand("orka", "install")))
 	}
 	controller, err := a.orkaControllerForLift(ctx)
 	if err != nil {
 		gaps = append(gaps, err)
 	} else if _, err := a.orkaCapture(ctx, nil, "-n", OrkaNamespace, "rollout", "status", "deploy/"+controller, "--timeout=10s"); err != nil {
-		gaps = append(gaps, fmt.Errorf("Orka controller is not Ready; prepare destination with kmx orka install: %w", err))
+		gaps = append(gaps, fmt.Errorf("Orka controller is not Ready; prepare destination with %s: %w", a.operationCommand("orka", "install"), err))
 	}
 	raw, err := a.orkaCapture(ctx, nil, "get", "namespace", namespace, "--ignore-not-found=true", "-o", "json")
 	if err != nil {
@@ -343,7 +353,7 @@ func (a *App) liftPrerequisites(ctx context.Context, namespace string) error {
 			} `json:"metadata"`
 		}
 		if json.Unmarshal(raw, &ns) != nil || ns.Kind != "Namespace" || ns.Metadata.Name != namespace || ns.Metadata.DeletionTimestamp != nil {
-			gaps = append(gaps, fmt.Errorf("destination namespace %s is missing or terminating; create it before lifting (kmx orka install prepares %s)", namespace, OrkaNamespace))
+			gaps = append(gaps, fmt.Errorf("destination namespace %s is missing or terminating; create it before lifting (%s prepares %s)", namespace, a.operationCommand("orka", "install"), OrkaNamespace))
 		}
 	}
 	return errors.Join(gaps...)

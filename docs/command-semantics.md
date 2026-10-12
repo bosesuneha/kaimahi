@@ -34,6 +34,50 @@ use these native instructions when invoked by KMX. Standalone script use has
 no KMX ownership receipt, so its fallback names the actual script with quoted
 arguments instead of a deleted Make target or an invented BYO recovery route.
 
+## Evaluation judge selectors (unreleased)
+
+`kmx agent evaluate` accepts `--judge-base-url <url>` and optional
+`--judge-key-env <env-name>` on both Orka and sessions paths. They select only
+judge transport and the credential's environment-variable name, never a secret
+value, judge model or version. Model/version, rubric and integer `minScore`
+belong in explicit `llmJudge` assertions; there is no default endpoint/model or
+agent-model fallback. Empty flags and unused judge configuration after `--case`
+selection are refused before Task/session execution. Completion suggests no
+endpoint/env names and suppresses file completion for both flags.
+
+Existing destination selectors stay unchanged: `--to-context` or a remembered
+Orka target, versus explicit `--sessions`; sessions still conflicts with
+`--to-context` and Orka-only `--result-port`. Judging shares the case deadline
+and never retries or reruns the agent. Safe reasoning goes to terminal stdout,
+not receipts, and may contain answer text. Offline `agent eval diff` and
+`agent verify` do not select a judge endpoint or call a judge; replay explicitly
+reports judge assertions not verified. See [judge behavior and disclosure](agent-lift.md#explicit-llm-judge).
+
+## Recorded-session selectors (unreleased)
+
+`kmx agent eval from-sessions <session-uid>... --sessions <source>
+--assertions <case.yaml> --out <manifest.json>` reads source journals without
+inference. An existing output manifest means atomic append, never overwrite;
+duplicates refuse the whole operation. Assertions are authored without `input`.
+The `agent eval` group holds case preparation and offline diff, while execution
+remains `agent evaluate`; no new top-level verb or workspace model is introduced.
+
+`agent evaluate --from-sessions <manifest> --source-sessions <source>
+--sessions <candidate>` requires both explicit source and candidate selection,
+bypasses Kubernetes configuration, and refuses Orka-only selectors. Source CA
+uses `--source-sessions-ca`; candidate CA retains `--sessions-ca`. `--show-content`
+and source selectors require `--from-sessions`, never silently changing ordinary
+evaluation. Existing authored-input behavior is unchanged.
+
+Recorded inputs require named destination confirmation using
+`KAIMAHI_CONFIRM=<normalized-candidate-host:port>` even on loopback. Judges require
+separate `KAIMAHI_CONFIRM_JUDGE=<canonical-judge-base-url>`. Refusals name the
+transfer destination plainly; choosing an endpoint alone is not consent.
+Reference runs suppress answers and judge reasoning unless `--show-content` is
+explicit. Help/completion performs no reads, writes or inference. See
+[reference cases and the conservative diff limitation](agent-lift.md#recorded-sessions-as-reference-cases),
+tracked in [#403](https://github.com/kaimahi-agents/kaimahi/issues/403).
+
 ## Vocabulary
 
 **Decided: keep Create → Prove → Lift.** Lift is the chosen lifecycle verb for

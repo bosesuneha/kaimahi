@@ -22,6 +22,11 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md), the
   longer accepts `--interactive`. `kmx targets` is the read-only capability view.
   Plane administration, model overlays, migration and their demo are removed;
   do not restore or regroup their commands.
+- Recorded-session case preparation is `kmx agent eval from-sessions`; execution
+  stays `kmx agent evaluate --from-sessions`. Keep reference manifests private,
+  require named candidate/judge confirmation before recorded-content transfer,
+  and suppress answer/reasoning output unless `--show-content` is explicit.
+  Expired sources are unknown, never a skip or export.
 - Keep **Create → Prove → Lift** as the local-to-remote story. **Lift** is the
   chosen agent lifecycle verb: retain `kmx agent lift` and interactive `/lift`,
   and use Lift in corresponding help and menu labels rather than renaming the
@@ -48,6 +53,18 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md), the
 - Preserve historical release records and explicit compatibility tests when
   updating current examples. Do not bulk-rename historical text or serialized
   state. Generated recovery commands must preserve selectors and shell quoting.
+
+## kagent version boundary
+
+- Preserve Orka defaults and exact-v0.10.2 kagent create. Bundle lift/status
+  requires explicit `--runtime kagent --runtime-version v0.10.3`, `--to-context`
+  and author-owned `KagentBindings`. Only Go deployment/status is qualified;
+  Python remains render-only. Dedicated CI qualifies Go lift/status and separately
+  proves one native A2A MCP answer; receipts still prove readiness, not execution.
+  Lift creates new objects or reuses a complete
+  matching UID-bound receipt without adoption, update or retry of ambiguous
+  writes. Readiness is not execution proof. Do not infer installation,
+  discovery, chat/run/evaluation, retirement or console support from this slice.
 
 ## Verification
 

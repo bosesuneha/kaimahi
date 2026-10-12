@@ -43,6 +43,7 @@ type normalizedEvaluationCase struct {
 type evaluationDiffRow struct {
 	CaseID, AssertionID, BeforeType, AfterType, BeforeDigest, AfterDigest string
 	Before, After, Status                                                 string
+	BeforeScores, AfterScores                                             []int
 }
 
 type evaluationDiffReport struct {
@@ -137,7 +138,7 @@ func readEvaluationDiffSource(path string) (normalizedEvaluation, error) {
 		return invalid()
 	}
 	legacyOrka := target.Target.Runtime == string(agentruntime.Orka) && target.SchemaVersion == 0 && target.RunID == ""
-	if !evaluationDiffNullJSON(raw, legacyOrka) {
+	if !evaluationReceiptJSONShape(raw, target.SchemaVersion, target.RunID, legacyOrka) {
 		return invalid()
 	}
 	decode := func(receipt any) bool {
@@ -398,7 +399,11 @@ func compareEvaluations(before, after normalizedEvaluation) evaluationDiffReport
 		if !exists {
 			add(evaluationDiffRow{CaseID: id, Status: "caseRemoved", BeforeDigest: b.CaseDigest})
 			for aid, row := range b.Assertions {
-				add(evaluationDiffRow{CaseID: id, AssertionID: aid, BeforeType: row.Type, BeforeDigest: row.DefinitionDigest, Before: string(row.Verdict), Status: "assertionRemoved"})
+				diffRow := evaluationDiffRow{CaseID: id, AssertionID: aid, BeforeType: row.Type, BeforeDigest: row.DefinitionDigest, Before: string(row.Verdict), Status: "assertionRemoved"}
+				if row.Judge != nil {
+					diffRow.BeforeScores = row.Judge.Scores
+				}
+				add(diffRow)
 			}
 			continue
 		}
@@ -412,13 +417,21 @@ func compareEvaluations(before, after normalizedEvaluation) evaluationDiffReport
 		for aid, br := range b.Assertions {
 			ar, exists := a.Assertions[aid]
 			row := evaluationDiffRow{CaseID: id, AssertionID: aid, BeforeType: br.Type, BeforeDigest: br.DefinitionDigest, Before: string(br.Verdict)}
+			if br.Judge != nil {
+				row.BeforeScores = br.Judge.Scores
+			}
 			if !exists {
 				row.Status = "assertionRemoved"
 				add(row)
 				continue
 			}
 			row.AfterType, row.AfterDigest, row.After = ar.Type, ar.DefinitionDigest, string(ar.Verdict)
+			if ar.Judge != nil {
+				row.AfterScores = ar.Judge.Scores
+			}
 			switch {
+			case br.Type == "llmJudge" && ar.Type == "llmJudge" && !evaluationJudgeSameIdentity(br.Judge, ar.Judge):
+				row.Status = "identityChanged"
 			case br.Type != ar.Type || br.DefinitionDigest != ar.DefinitionDigest:
 				row.Status = "definitionChanged"
 			case !sameInput:
@@ -440,7 +453,11 @@ func compareEvaluations(before, after normalizedEvaluation) evaluationDiffReport
 		}
 		for aid, ar := range a.Assertions {
 			if _, exists := b.Assertions[aid]; !exists {
-				add(evaluationDiffRow{CaseID: id, AssertionID: aid, AfterType: ar.Type, AfterDigest: ar.DefinitionDigest, After: string(ar.Verdict), Status: "assertionAdded"})
+				row := evaluationDiffRow{CaseID: id, AssertionID: aid, AfterType: ar.Type, AfterDigest: ar.DefinitionDigest, After: string(ar.Verdict), Status: "assertionAdded"}
+				if ar.Judge != nil {
+					row.AfterScores = ar.Judge.Scores
+				}
+				add(row)
 			}
 		}
 	}
@@ -448,7 +465,11 @@ func compareEvaluations(before, after normalizedEvaluation) evaluationDiffReport
 		if _, exists := before.Cases[id]; !exists {
 			add(evaluationDiffRow{CaseID: id, Status: "caseAdded", AfterDigest: a.CaseDigest})
 			for aid, row := range a.Assertions {
-				add(evaluationDiffRow{CaseID: id, AssertionID: aid, AfterType: row.Type, AfterDigest: row.DefinitionDigest, After: string(row.Verdict), Status: "assertionAdded"})
+				diffRow := evaluationDiffRow{CaseID: id, AssertionID: aid, AfterType: row.Type, AfterDigest: row.DefinitionDigest, After: string(row.Verdict), Status: "assertionAdded"}
+				if row.Judge != nil {
+					diffRow.AfterScores = row.Judge.Scores
+				}
+				add(diffRow)
 			}
 		}
 	}
@@ -463,6 +484,10 @@ func compareEvaluations(before, after normalizedEvaluation) evaluationDiffReport
 		return a.Status < b.Status
 	})
 	return r
+}
+
+func evaluationJudgeSameIdentity(before, after *agentruntime.EvaluationJudgeEvidence) bool {
+	return before != nil && after != nil && before.Model == after.Model && before.ModelVersion == after.ModelVersion && before.Provenance == after.Provenance && before.EvaluatorDigest == after.EvaluatorDigest && before.ConfigurationDigest == after.ConfigurationDigest && before.MinScore == after.MinScore
 }
 
 func writeEvaluationDiffReport(out io.Writer, r evaluationDiffReport) error {
@@ -480,6 +505,9 @@ func writeEvaluationDiffReport(out io.Writer, r evaluationDiffReport) error {
 		fmt.Fprintln(&text, "CASE\tASSERTION\tTYPE BEFORE/AFTER\tVERDICT BEFORE/AFTER\tSTATUS\tDIGEST BEFORE/AFTER")
 		for _, row := range r.Rows {
 			fmt.Fprintf(&text, "%s\t%s\t%s/%s\t%s/%s\t%s\t%s/%s\n", row.CaseID, orDash(row.AssertionID), orDash(row.BeforeType), orDash(row.AfterType), orDash(row.Before), orDash(row.After), row.Status, orDash(row.BeforeDigest), orDash(row.AfterDigest))
+			if row.BeforeType == "llmJudge" || row.AfterType == "llmJudge" {
+				fmt.Fprintf(&text, "judge scores %s/%s: %v/%v\n", row.CaseID, row.AssertionID, row.BeforeScores, row.AfterScores)
+			}
 		}
 		status := "complete"
 		if r.Regression {
