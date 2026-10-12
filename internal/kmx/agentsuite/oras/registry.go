@@ -157,6 +157,7 @@ func newRegistryRepository(
 	}
 	repository.PlainHTTP = plainHTTP
 	repository.ReferrerListMaxPages = 4
+	repository.MaxMetadataBytes = maxProvenanceObjectBytes
 	// Deleting old referrer indexes fails on registries without DELETE.
 	repository.SkipReferrersGC = true
 	anonymous := plainHTTP && !isLoopbackHost((&url.URL{Host: parsed.Registry}).Hostname())
