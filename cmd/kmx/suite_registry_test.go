@@ -155,7 +155,7 @@ func TestSuiteRegistryPushPrintsDigestAndPassesForce(t *testing.T) {
 func TestSuiteRegistryProvenanceFailureHasSafeDiagnostics(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	t.Setenv("KMX_HOME", t.TempDir())
-	seed, _ := suiteOutputRegistry(t)
+	seed, digest := suiteOutputRegistry(t)
 	upstream, err := url.Parse(seed.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ func TestSuiteRegistryProvenanceFailureHasSafeDiagnostics(t *testing.T) {
 				}
 			}
 			pulled, err := agentsuiteoras.PullRegistry(context.Background(), reference, filepath.Join(t.TempDir(), "pulled"), true)
-			if err != nil || pulled.Report == nil || pulled.Report.Name != "minimal" {
+			if err != nil || pulled.Descriptor.Digest != digest {
 				t.Fatalf("existing tag was changed: %+v, %v", pulled, err)
 			}
 		})
