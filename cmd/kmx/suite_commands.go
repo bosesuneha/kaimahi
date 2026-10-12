@@ -182,7 +182,7 @@ func newSuiteCommand(state *commandState) *cobra.Command {
 			result, err = a.PushSuiteRegistry(cmd.Context(), args[0], args[1], pushPlainHTTP, pushForce, provenance)
 		}
 		if err != nil {
-			return err
+			return &suiteDiagnosticError{err}
 		}
 		if target == "" {
 			if _, err := fmt.Fprintf(
@@ -261,7 +261,7 @@ func newSuiteCommand(state *commandState) *cobra.Command {
 			result, err = a.PullSuiteRegistry(cmd.Context(), args[0], pullOutput, pullPlainHTTP)
 		}
 		if err != nil {
-			return err
+			return &suiteDiagnosticError{err}
 		}
 		_, err = fmt.Fprintf(
 			cmd.OutOrStdout(),
@@ -347,6 +347,13 @@ func provenanceClaims(provenance agentsuite.Provenance) string {
 	}
 	return claims
 }
+
+// suiteDiagnosticError keeps registry failures safe to print without losing
+// the underlying error for callers that inspect its type or identity.
+type suiteDiagnosticError struct{ cause error }
+
+func (e *suiteDiagnosticError) Error() string { return terminalLine(e.cause.Error()) }
+func (e *suiteDiagnosticError) Unwrap() error { return e.cause }
 
 // terminalLine makes registry error text a single safe line.
 func terminalLine(s string) string {
