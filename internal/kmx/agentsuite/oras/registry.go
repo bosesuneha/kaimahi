@@ -163,6 +163,18 @@ func newRegistryRepository(
 	anonymous := plainHTTP && !isLoopbackHost((&url.URL{Host: parsed.Registry}).Hostname())
 	client := *auth.DefaultClient
 	httpClient := *client.Client
+	// ORAS auth installs a redirect callback, bypassing net/http's default
+	// ten-redirect limit. Keep that bound even with a permissive upstream policy.
+	checkRedirect := httpClient.CheckRedirect
+	httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if checkRedirect != nil {
+			return checkRedirect(req, via)
+		}
+		return nil
+	}
 	httpClient.Transport = &registryTransport{base: httpClient.Transport, anonymous: anonymous}
 	if anonymous {
 		// Do not open Docker configuration or use auth machinery: even an
