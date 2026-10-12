@@ -79,6 +79,44 @@ func TestSuiteSourceRevisionRecordsExactCommit(t *testing.T) {
 	}
 }
 
+func TestSuiteSourceRevisionIgnoresInheritedRepositoryLocation(t *testing.T) {
+	root, suite := gitSuiteRepository(t)
+	wantCommit := runGit(t, root, "rev-parse", "HEAD")
+	other, _ := gitSuiteRepository(t)
+	writeFile(t, filepath.Join(other, "unrelated.txt"), "another repository\n")
+	runGit(t, other, "add", ".")
+	runGit(t, other, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "unrelated")
+	if runGit(t, other, "rev-parse", "HEAD") == wantCommit {
+		t.Fatal("fixture repositories must have different commits")
+	}
+	otherGit := filepath.Join(other, ".git")
+	for _, test := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{"hook repository", map[string]string{"GIT_DIR": otherGit, "GIT_WORK_TREE": root}},
+		{"git directory", map[string]string{"GIT_DIR": otherGit}},
+		{"work tree", map[string]string{"GIT_WORK_TREE": other}},
+		{"index", map[string]string{"GIT_INDEX_FILE": filepath.Join(otherGit, "index")}},
+		{"object directory", map[string]string{"GIT_OBJECT_DIRECTORY": filepath.Join(otherGit, "objects")}},
+		{"alternate objects", map[string]string{"GIT_ALTERNATE_OBJECT_DIRECTORIES": filepath.Join(otherGit, "objects")}},
+		{"common directory", map[string]string{"GIT_COMMON_DIR": otherGit}},
+		{"namespace", map[string]string{"GIT_NAMESPACE": "other"}},
+		{"shallow file", map[string]string{"GIT_SHALLOW_FILE": filepath.Join(otherGit, "missing-shallow")}},
+		{"replacement refs", map[string]string{"GIT_REPLACE_REF_BASE": "refs/other/"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for key, value := range test.env {
+				t.Setenv(key, value)
+			}
+			source, reason := suiteSourceRevision(context.Background(), suite)
+			if source == nil || source.Commit != wantCommit || source.Path != "suites/minimal" {
+				t.Fatalf("suiteSourceRevision() = %+v, %q; want source commit %s", source, reason, wantCommit)
+			}
+		})
+	}
+}
+
 func TestSuiteSourceRevisionRefusesAnythingPackingWouldNotReproduce(t *testing.T) {
 	for _, test := range []struct {
 		name   string

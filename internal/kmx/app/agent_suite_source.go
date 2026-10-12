@@ -39,6 +39,20 @@ func suiteSourceRevision(ctx context.Context, dir string) (*agentsuite.Provenanc
 	git := func(stdin []byte, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(gitCtx, "git", append([]string{"--literal-pathspecs", "-C", canonical}, args...)...)
 		cmd.Stdin = bytes.NewReader(stdin)
+		// Hooks and callers can select another repository even with -C.
+		// Keep unrelated settings, but discover the source repository afresh.
+		cmd.Env = make([]string, 0, len(os.Environ()))
+		for _, entry := range os.Environ() {
+			key, _, _ := strings.Cut(entry, "=")
+			switch key {
+			case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+				"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
+				"GIT_IMPLICIT_WORK_TREE", "GIT_PREFIX", "GIT_GRAFT_FILE",
+				"GIT_SHALLOW_FILE", "GIT_REPLACE_REF_BASE":
+				continue
+			}
+			cmd.Env = append(cmd.Env, entry)
+		}
 		return cmd.Output()
 	}
 	rootRaw, err := git(nil, "rev-parse", "--show-toplevel")
