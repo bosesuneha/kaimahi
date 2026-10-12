@@ -353,12 +353,17 @@ if pull can already see kmx provenance for it, and otherwise attaches it. Regist
 layouts get none, because a conformant AgentSuite layout holds exactly one
 manifest.
 
-Pull lists at most 64 in-toto referrers and checks each one that uses this
-build type: its subject and statement must name the pulled digest, its builder
+Pull checks at most 64 in-toto referrers from at most four API pages. Referrer
+indexes, manifests and statements are limited to 1 MiB each. It checks each
+referrer that uses this build type: its subject and statement must name the pulled digest, its builder
 must be kmx, and every value it prints must be printable text without control
 or format characters. Malformed
 ones are warnings; other producers' attestations are skipped. A listing failure
-prints `Provenance: not checked` and does not block the pull.
+prints `Provenance: not checked` and does not block the pull. The 64-referrer
+limit applies to pull verification, not index updates: push preserves other
+producers' descriptors in a bounded fallback index. An attached claim beyond
+pull's limit may not be displayed, even with `--require-provenance`; that flag
+requires attachment, not visibility or trust.
 
 ### Runtime commands
 
