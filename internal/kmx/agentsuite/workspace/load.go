@@ -45,6 +45,9 @@ func Load(ctx context.Context, p *Prepared) (*NativeSuite, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if errors.Is(err, ErrPreviousLayout) {
+			return nil, ErrPreviousLayout
+		}
 		// Strict verifier diagnostics can quote untrusted metadata keys or values.
 		return nil, errors.New("packaged native suite verification failed")
 	}
@@ -62,6 +65,9 @@ func LoadArtifact(ctx context.Context, artifact *suiteoras.Artifact) (*NativeSui
 	}
 	files := artifact.Files()
 	if _, err := validateNative(files); err != nil {
+		if errors.Is(err, ErrPreviousLayout) {
+			return nil, ErrPreviousLayout
+		}
 		return nil, errors.New("packaged native suite verification failed")
 	}
 	return loadNativeFiles(ctx, files, artifact.Descriptor().Digest.String())
@@ -84,6 +90,10 @@ func loadNativeFiles(ctx context.Context, files map[string][]byte, digest string
 	if err != nil {
 		return nil, errors.New("invalid packaged graph identity")
 	}
+	cases, _, err := packagedCases(files, member)
+	if err != nil {
+		return nil, errors.New("invalid packaged native evaluation cases")
+	}
 	// Both entry points guarantee exactly one member, composition and profile,
 	// with complete ordered cases and a caller-owned map of verified bytes.
 	result := &NativeSuite{
@@ -101,11 +111,8 @@ func loadNativeFiles(ctx context.Context, files map[string][]byte, digest string
 		RendererVersion:    native.RendererVersion,
 		Runtime:            profile,
 		ExecutionProfile:   native.ExecutionProfile,
-		Cases:              make([]PackagedCase, 0, len(native.Cases)),
+		Cases:              cases,
 		RequiredImages:     []string{},
-	}
-	for _, c := range native.Cases {
-		result.Cases = append(result.Cases, PackagedCase{Path: c.Path, Digest: c.Digest, Bytes: files[c.Path]})
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

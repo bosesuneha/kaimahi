@@ -32,6 +32,14 @@ to do. Sections: **Added**, **Changed**, **Fixed**, **Breaking**, **Upgrading**.
 - Judge evidence now binds its request style; older judge receipts without it
   require fresh evaluation. Text-only receipts remain unchanged.
 
+- Suites packaged by v0.6.0 (cases under `metadata/kmx/eval/`) are refused by
+  `lift`, `eval diff` and other packaged readers, and their passing receipts are
+  unreadable. Rerun `kmx eval` and `kmx push` with this version; there is no
+  migration reader.
+
+- Case IDs within a member must differ by more than letter case, and assertion
+  operands must not contain Unicode line or paragraph separators.
+
 ### Fixed
 
 - Use one modern judge request shape (`max_completion_tokens`, no temperature
@@ -128,6 +136,16 @@ to do. Sections: **Added**, **Changed**, **Fixed**, **Breaking**, **Upgrading**.
   runtime/inference readiness or evaluation proof. `kmx targets` remains the
   separate runtime-capability view. Composed eval/push/Lift is not implemented;
   kagent remains excluded until its candidate cleanup is qualified.
+
+### Changed
+
+- Native suites package authored cases as public AgentSuite evaluations:
+  `evals/<member>/index.json` plus one canonical JSON case per case ID, bound
+  through the member's agent manifest. Authoring (`eval/*.yaml`), evaluation
+  order and assertion identities are unchanged. Cases now change the public
+  graph digest as well as the suite digest. Renaming an authored case file no
+  longer changes the packaged suite. Private native metadata no longer lists
+  cases, and native artifacts accept up to 136 files (one index plus 128 cases).
 
 ### Upgrading
 

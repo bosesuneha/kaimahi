@@ -292,6 +292,19 @@ Unanchored or unverifiable orphans refuse deletion/completeness claims. No journ
 lease, automatic sweep or publication blockade. Private Quickstart/console stay
 canonical; kagent/Sessions/judge behavior and all existing timeouts are unchanged.
 
+## Native suite case packaging
+
+- Native workspaces author `eval/*.yaml`; preparation converts each case to a
+  public evaluation case at `evals/<member>/cases/<id>.json`, listed in file-name
+  order by `evals/<member>/index.json` and bound through the member's `evals`
+  reference. Legacy `expectContains` entries keep `expectContains.N` IDs so
+  assertion definition digests are unchanged. Private native metadata carries no
+  case inventory. Packaged readers convert cases back through one decoder,
+  carry `runs`/`minPasses`, and refuse `critical` and extension assertion types
+  rather than ignoring them. Receipts record packaged case paths and digests of the
+  packaged JSON bytes. Suites with cases under `metadata/kmx/eval/` refuse with
+  a fixed rerun remedy; do not add a migration reader.
+
 ## Verification
 
 The browser documentation preview renders the root README and `docs/*.md`

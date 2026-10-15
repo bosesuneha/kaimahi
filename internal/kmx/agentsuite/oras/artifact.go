@@ -29,8 +29,9 @@ const (
 	artifactTarBytes        = 10 << 20
 	artifactFileBytes       = 1 << 20
 	artifactContentBytes    = 8 << 20
-	artifactFilesLimit      = 135
-	artifactEntriesLimit    = 256
+	// 7 native files, 1 eval index and 128 cases.
+	artifactFilesLimit   = 136
+	artifactEntriesLimit = 256
 )
 
 // Artifact retains verified original packaged bytes, not source or a re-archive.
