@@ -680,14 +680,16 @@ evaluation order, and the member's agent manifest binds the index by digest.
 Authored comments, formatting and file names are not packaged. Renaming a case
 file changes the source fingerprint, and changes the suite only if it changes
 file-name order. Case IDs must differ by more than letter case. A case that the
-public format cannot represent, such as an assertion operand containing a
-Unicode line or paragraph separator, refuses before preparation. JSON escaping
+public format cannot represent, such as a `contains`/`notContains` value or tool
+name containing a Unicode line or paragraph separator, refuses before
+preparation. JSON escaping
 can make a packaged case larger than its YAML, so a case near the 1 MiB per-file
 or 8 MiB total limit can refuse.
 
 Loading a packaged suite converts each case back, keeps `runs`/`minPasses`,
 and refuses public features KMX cannot execute (`critical: false`, extension
-assertion types, more than 100 runs) instead of ignoring them. Suites packaged
+assertion types, more than 100 runs) instead of ignoring them, and names that
+reason in its error. Suites packaged
 by v0.6.0 no longer validate; receipts recorded against them refuse with a
 remedy to rerun `kmx eval` and `kmx push`. There is no migration reader.
 

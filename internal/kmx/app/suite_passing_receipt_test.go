@@ -434,3 +434,29 @@ func TestSuitePassingReceiptRefusesPreviousCaseLayoutWithRemedy(t *testing.T) {
 		t.Fatalf("previous layout receipt error = %v", err)
 	}
 }
+
+func TestSuitePassingReceiptRefusesPreviousRuntimeReceiptWithRemedy(t *testing.T) {
+	p, subject, observations := sessionsPassingFixture(t)
+	sessions, err := newSuiteSessionsPassingReceipt(t.Context(), p, subject, observations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions.RunID = strings.Repeat("a", 32)
+	sessions.Sessions.Subject.Renderer = "kmx.native-agentsessions/v1"
+	// Replaces PATH, so it runs after the git fixture.
+	kagent := suiteDiffFixtures(t)["native-kagent"]
+	kagent.Kagent.Observation.Subject.Renderer = "kmx.native-kagent/v1"
+	for mode, receipt := range map[string]*suitePassingReceipt{"native-kagent": kagent, "native-agentsessions": sessions} {
+		t.Run(mode, func(t *testing.T) {
+			receipt.Cases[0].Path = "metadata/kmx/eval/example.yaml"
+			raw, err := spec.Marshal(receipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = parseSuitePassingReceipt(raw)
+			if !errors.Is(err, errPreviousSuiteReceipt) || !strings.Contains(err.Error(), "rerun kmx eval and kmx push") {
+				t.Fatalf("previous %s receipt error = %v", mode, err)
+			}
+		})
+	}
+}

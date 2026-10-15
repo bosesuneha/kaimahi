@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	spec "github.com/kaimahi-agents/kaimahi/agentsuite"
 	suiteoras "github.com/kaimahi-agents/kaimahi/internal/kmx/agentsuite/oras"
 	"github.com/kaimahi-agents/kaimahi/internal/kmx/agentsuite/workspace"
 	"github.com/kaimahi-agents/kaimahi/internal/kmx/runtime"
@@ -135,5 +136,61 @@ func TestMaximumCaseInventoryPreparesAndTransfers(t *testing.T) {
 	loaded, err := workspace.LoadArtifact(t.Context(), artifact)
 	if err != nil || len(loaded.Cases) != 128 {
 		t.Fatal("maximum inventory refused", err)
+	}
+}
+
+func TestLoadNamesContentFreeRefusalReasons(t *testing.T) {
+	for name, test := range map[string]struct {
+		mutate func(t *testing.T, out string)
+		want   string
+	}{
+		"previous kmx": {func(t *testing.T, out string) {
+			name := filepath.Join(out, "metadata/kmx/native-orka.json")
+			b := string(readFile(t, name))
+			old := strings.NewReplacer(`"schemaVersion":2`, `"cases":[],"schemaVersion":1`, "kmx.native-orka/v2", "kmx.native-orka/v1").Replace(b)
+			if old == b {
+				t.Fatal("native metadata fixture did not change")
+			}
+			writeFile(t, name, old)
+		}, "rerun kmx eval and kmx push"},
+		"runs over limit": {func(t *testing.T, out string) {
+			rebindEvals(t, out, func(_ *spec.EvaluationIndex, c map[string]any) { c["runs"] = 101 })
+		}, "runs <= 100"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, cache := createWorkspace(t)
+			p, err := workspace.Prepare(t.Context(), root, cache)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := extract(t, p)
+			test.mutate(t, out)
+			layout := filepath.Join(t.TempDir(), "layout")
+			result, err := suiteoras.Push(t.Context(), out, layout, "modified")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := filepath.WalkDir(layout, func(name string, d os.DirEntry, err error) error {
+				if err != nil || !d.IsDir() {
+					return err
+				}
+				return os.Chmod(name, 0o700)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			candidate := *p
+			candidate.Path, candidate.Descriptor = layout, result.Descriptor
+			_, loadErr := workspace.Load(t.Context(), &candidate)
+			artifact, err := suiteoras.ReadArtifactLayout(t.Context(), layout, result.Descriptor.Digest.String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, artifactErr := workspace.LoadArtifact(t.Context(), artifact)
+			for _, err := range []error{loadErr, artifactErr} {
+				if err == nil || !strings.HasPrefix(err.Error(), "packaged native suite verification failed: ") || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("refusal reason not named: %v", err)
+				}
+			}
+		})
 	}
 }

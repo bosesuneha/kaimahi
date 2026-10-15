@@ -255,6 +255,11 @@ func basicSuitePassingReceipt(r *suitePassingReceipt) error {
 	if r == nil || r.SchemaVersion != 1 || !evaluationRunID(r.RunID) || r.Result != "pass" || r.Cases == nil {
 		return errSuitePassingReceipt
 	}
+	for _, c := range r.Cases {
+		if strings.HasPrefix(c.Path, "metadata/kmx/eval/") {
+			return errPreviousSuiteReceipt
+		}
+	}
 	switch r.ExecutionMode {
 	case "native-orka", "native-kagent":
 		if r.Domain != "kmx.native-suite.passing/v1" {
@@ -303,11 +308,6 @@ func basicSuitePassingReceipt(r *suitePassingReceipt) error {
 	for _, owned := range ownedResources {
 		if !verificationIdentity(owned.UID) || owned.Generation < 1 || !verificationDigest(owned.SpecDigest) {
 			return errSuitePassingReceipt
-		}
-	}
-	for _, c := range r.Cases {
-		if strings.HasPrefix(c.Path, "metadata/kmx/eval/") {
-			return errPreviousSuiteReceipt
 		}
 	}
 	if err := validateSuiteRunGroups(r.Cases); err != nil {

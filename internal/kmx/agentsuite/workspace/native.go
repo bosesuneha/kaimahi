@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,6 +41,14 @@ const kagentExecutionProfile = "kmx.kagent-v0.10.3-go-linux-amd64-tool-free-open
 const nativeLayoutVersion = "kmx.native-suite-evals/v2"
 
 const nativeRecordVersion = 2
+
+var errPreviousNativeSuite = errors.New("packaged by an earlier kmx; rerun kmx eval and kmx push with this kmx")
+
+// refusal is safe to show for untrusted suites.
+type refusal struct{ err error }
+
+func (r refusal) Error() string { return r.err.Error() }
+func (r refusal) Unwrap() error { return r.err }
 
 // nativeRecord holds private execution metadata; cases live under evals/<member>/.
 type nativeRecord struct {
@@ -356,6 +365,13 @@ func nativeProfile(files map[string][]byte) (nativeRecord, RuntimeProfile, error
 	} else if sessions {
 		metadataPath, mode, renderer = agentsessionsNativePath, "native-agentsessions", agentsessionsRendererVersion
 	}
+	// Strict decoding would reject the v0.6.0 cases field first.
+	var previous struct {
+		SchemaVersion int `json:"schemaVersion"`
+	}
+	if json.Unmarshal(files[metadataPath], &previous) == nil && previous.SchemaVersion == 1 {
+		return record, RuntimeProfile{}, refusal{errPreviousNativeSuite}
+	}
 	if err := spec.Unmarshal(files[metadataPath], &record); err != nil {
 		return record, RuntimeProfile{}, err
 	}
@@ -400,7 +416,7 @@ func validateNative(files map[string][]byte) (string, error) {
 	m.Model.Protocol, m.Model.Model = agent.Model.Protocol, agent.Model.Model
 	_, cases, err := packagedCases(files, agent)
 	if err != nil {
-		return "", err
+		return "", refusal{err}
 	}
 	expected, err := resolve(suite.Name, m, files["instructions/"+m.ID+".md"], files["build-profiles/default.json"], cases)
 	if err != nil {
@@ -481,8 +497,11 @@ func packagedCases(files map[string][]byte, agent spec.Agent) ([]PackagedCase, [
 	if err := spec.Unmarshal(files[agent.Evals[0].Path], &index); err != nil {
 		return nil, nil, errors.New("invalid packaged evaluation index")
 	}
-	if index.Agent != agent.ID || len(index.Cases) == 0 || len(index.Cases) > maxPackagedCases {
+	if index.Agent != agent.ID {
 		return nil, nil, errors.New("packaged evaluation index does not match its member")
+	}
+	if len(index.Cases) == 0 || len(index.Cases) > maxPackagedCases {
+		return nil, nil, errors.New("packaged evaluation index must list 1 to 128 cases")
 	}
 	packaged := make([]PackagedCase, 0, len(index.Cases))
 	cases := make([]runtime.EvaluationCase, 0, len(index.Cases))

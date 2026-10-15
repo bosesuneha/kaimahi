@@ -78,8 +78,9 @@ to do. Sections: **Added**, **Changed**, **Fixed**, **Breaking**, **Upgrading**.
   passing receipts are refused by `push`, `lift` and `eval diff` with
   `rerun kmx eval and kmx push`. There is no migration reader.
 
-- Case IDs within a member must differ by more than letter case, and assertion
-  operands must not contain Unicode line or paragraph separators.
+- Case IDs within a member must differ by more than letter case, and
+  `contains`/`notContains` values and tool names must not contain Unicode line
+  or paragraph separators.
 
 ### Fixed
 

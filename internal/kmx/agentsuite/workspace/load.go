@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	spec "github.com/kaimahi-agents/kaimahi/agentsuite"
 	suiteoras "github.com/kaimahi-agents/kaimahi/internal/kmx/agentsuite/oras"
@@ -46,7 +47,7 @@ func Load(ctx context.Context, p *Prepared) (*NativeSuite, error) {
 			return nil, err
 		}
 		// Strict verifier diagnostics can quote untrusted metadata keys or values.
-		return nil, errors.New("packaged native suite verification failed")
+		return nil, verificationFailed(err)
 	}
 	return loadNativeFiles(ctx, files, p.Descriptor.Digest.String())
 }
@@ -62,9 +63,18 @@ func LoadArtifact(ctx context.Context, artifact *suiteoras.Artifact) (*NativeSui
 	}
 	files := artifact.Files()
 	if _, err := validateNative(files); err != nil {
-		return nil, errors.New("packaged native suite verification failed")
+		return nil, verificationFailed(err)
 	}
 	return loadNativeFiles(ctx, files, artifact.Descriptor().Digest.String())
+}
+
+// verificationFailed exposes only refusal reasons.
+func verificationFailed(err error) error {
+	var r refusal
+	if errors.As(err, &r) {
+		return fmt.Errorf("packaged native suite verification failed: %w", r)
+	}
+	return errors.New("packaged native suite verification failed")
 }
 
 func loadNativeFiles(ctx context.Context, files map[string][]byte, digest string) (*NativeSuite, error) {
