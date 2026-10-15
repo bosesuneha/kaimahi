@@ -3,7 +3,6 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -41,19 +40,6 @@ const kagentExecutionProfile = "kmx.kagent-v0.10.3-go-linux-amd64-tool-free-open
 const nativeLayoutVersion = "kmx.native-suite-evals/v2"
 
 const nativeRecordVersion = 2
-
-// ErrPreviousLayout marks suites with cases under metadata/kmx/eval.
-var ErrPreviousLayout = errors.New("suite was packaged by an earlier kmx with cases under metadata/kmx/eval; rerun kmx eval and kmx push with this kmx")
-
-func previousNativeLayout(record []byte) error {
-	var version struct {
-		SchemaVersion int `json:"schemaVersion"`
-	}
-	if json.Unmarshal(record, &version) == nil && version.SchemaVersion == 1 {
-		return ErrPreviousLayout
-	}
-	return nil
-}
 
 // nativeRecord holds private execution metadata; cases live under evals/<member>/.
 type nativeRecord struct {
@@ -370,9 +356,6 @@ func nativeProfile(files map[string][]byte) (nativeRecord, RuntimeProfile, error
 	} else if sessions {
 		metadataPath, mode, renderer = agentsessionsNativePath, "native-agentsessions", agentsessionsRendererVersion
 	}
-	if err := previousNativeLayout(files[metadataPath]); err != nil {
-		return record, RuntimeProfile{}, err
-	}
 	if err := spec.Unmarshal(files[metadataPath], &record); err != nil {
 		return record, RuntimeProfile{}, err
 	}
@@ -470,8 +453,9 @@ func DecodePackagedCase(b []byte) (runtime.EvaluationCase, error) {
 	}
 	c := runtime.EvaluationCase{ID: pc.ID, Input: pc.Input, Runs: pc.Runs, MinPasses: pc.MinPasses}
 	for _, a := range pc.Assertions {
-		if a.Critical != nil {
-			return runtime.EvaluationCase{}, errors.New("packaged evaluation assertion declares critical, which KMX cannot execute")
+		// critical defaults to true, which is how KMX evaluates every assertion.
+		if a.Critical != nil && !*a.Critical {
+			return runtime.EvaluationCase{}, errors.New("packaged evaluation assertion is non-critical; KMX evaluates every assertion as critical")
 		}
 		if strings.HasPrefix(a.ID, "expectContains.") {
 			if len(c.Assertions) != 0 || a.ID != fmt.Sprintf("expectContains.%d", len(c.ExpectContains)) || a.Type != "contains" {

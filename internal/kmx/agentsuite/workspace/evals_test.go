@@ -1,7 +1,6 @@
 package workspace_test
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	spec "github.com/kaimahi-agents/kaimahi/agentsuite"
 	suiteoras "github.com/kaimahi-agents/kaimahi/internal/kmx/agentsuite/oras"
 	"github.com/kaimahi-agents/kaimahi/internal/kmx/agentsuite/workspace"
 	"github.com/kaimahi-agents/kaimahi/internal/kmx/runtime"
@@ -96,10 +94,14 @@ func TestDecodePackagedCaseRefusesUnexecutableOrMalformedCases(t *testing.T) {
 	if _, err := workspace.DecodePackagedCase([]byte(base)); err != nil {
 		t.Fatal(err)
 	}
+	explicit := strings.Replace(base, `"type":"contains"`, `"critical":true,"type":"contains"`, 1)
+	if c, err := workspace.DecodePackagedCase([]byte(explicit)); err != nil || len(c.ExpectContains) != 1 {
+		t.Fatal("explicit default critical:true refused", err)
+	}
 	for name, doc := range map[string]string{
 		"runs over limit":    strings.Replace(base, `"schemaVersion"`, `"runs":101,"schemaVersion"`, 1),
 		"minPasses only":     strings.Replace(base, `"schemaVersion"`, `"minPasses":1,"schemaVersion"`, 1),
-		"critical":           strings.Replace(base, `"type":"contains"`, `"critical":true,"type":"contains"`, 1),
+		"non-critical":       strings.Replace(base, `"type":"contains"`, `"critical":false,"type":"contains"`, 1),
 		"skipped legacy":     strings.Replace(base, "expectContains.0", "expectContains.1", 1),
 		"legacy after":       `{"assertions":[{"id":"a","type":"contains","value":"4"},{"id":"expectContains.0","type":"contains","value":"4"}],"id":"sum","input":"What is 2+2?","mediaType":"application/vnd.agentsuite.eval.case.v1+json","schemaVersion":"1.0.0-draft"}`,
 		"legacy not contain": strings.Replace(base, `"type":"contains","value":"4"`, `"pattern":"4","type":"regex"`, 1),
@@ -133,36 +135,5 @@ func TestMaximumCaseInventoryPreparesAndTransfers(t *testing.T) {
 	loaded, err := workspace.LoadArtifact(t.Context(), artifact)
 	if err != nil || len(loaded.Cases) != 128 {
 		t.Fatal("maximum inventory refused", err)
-	}
-}
-
-// Old-layout suites refuse with a rerun remedy.
-func TestPreviousCaseLayoutRefusesWithRemedy(t *testing.T) {
-	root, cache := createWorkspace(t)
-	p, err := workspace.Prepare(t.Context(), root, cache)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := extract(t, p)
-	removeEvals(t, out)
-	authored := readFile(t, filepath.Join(root, "eval/example.yaml"))
-	writeFile(t, filepath.Join(out, "metadata/kmx/eval/example.yaml"), string(authored))
-	record, err := spec.Marshal(map[string]any{"schemaVersion": 1, "executionMode": "native-orka", "member": "greeter", "rendererVersion": "kmx.native-orka/v1", "requiredImages": []string{},
-		"cases": []map[string]string{{"path": "metadata/kmx/eval/example.yaml", "digest": godigest.FromBytes(authored).String()}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(out, "metadata/kmx/native-orka.json"), string(record))
-	layout := filepath.Join(t.TempDir(), "layout")
-	pushed, err := suiteoras.Push(t.Context(), out, layout, "previous")
-	if err != nil {
-		t.Fatal(err)
-	}
-	artifact, err := suiteoras.ReadArtifactLayout(t.Context(), layout, pushed.Descriptor.Digest.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := workspace.LoadArtifact(t.Context(), artifact); !errors.Is(err, workspace.ErrPreviousLayout) {
-		t.Fatalf("previous layout error = %v", err)
 	}
 }

@@ -45,9 +45,6 @@ func Load(ctx context.Context, p *Prepared) (*NativeSuite, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if errors.Is(err, ErrPreviousLayout) {
-			return nil, ErrPreviousLayout
-		}
 		// Strict verifier diagnostics can quote untrusted metadata keys or values.
 		return nil, errors.New("packaged native suite verification failed")
 	}
@@ -65,9 +62,6 @@ func LoadArtifact(ctx context.Context, artifact *suiteoras.Artifact) (*NativeSui
 	}
 	files := artifact.Files()
 	if _, err := validateNative(files); err != nil {
-		if errors.Is(err, ErrPreviousLayout) {
-			return nil, ErrPreviousLayout
-		}
 		return nil, errors.New("packaged native suite verification failed")
 	}
 	return loadNativeFiles(ctx, files, artifact.Descriptor().Digest.String())

@@ -677,17 +677,19 @@ case ID; legacy `expectContains` entries keep their KMX assertion IDs
 (`expectContains.0`, ...), so assertion identities and definition digests are
 unchanged. The index lists cases in authored file-name order, which is the
 evaluation order, and the member's agent manifest binds the index by digest.
-Authored comments, formatting and file names are not packaged: renaming a case
-file changes the source fingerprint but not the suite. Case IDs must differ by
-more than letter case. A case that the public format cannot represent, such as
-an assertion operand containing a Unicode line or paragraph separator, refuses
-before preparation.
+Authored comments, formatting and file names are not packaged. Renaming a case
+file changes the source fingerprint, and changes the suite only if it changes
+file-name order. Case IDs must differ by more than letter case. A case that the
+public format cannot represent, such as an assertion operand containing a
+Unicode line or paragraph separator, refuses before preparation. JSON escaping
+can make a packaged case larger than its YAML, so a case near the 1 MiB per-file
+or 8 MiB total limit can refuse.
 
 Loading a packaged suite converts each case back, keeps `runs`/`minPasses`,
-and refuses public features KMX cannot execute (`critical`, extension assertion
-types, more than 100 runs) instead of ignoring them. Suites packaged by an earlier KMX with cases under
-`metadata/kmx/eval/` refuse with a remedy to rerun `kmx eval` and `kmx push`;
-there is no migration reader.
+and refuses public features KMX cannot execute (`critical: false`, extension
+assertion types, more than 100 runs) instead of ignoring them. Suites packaged
+by v0.6.0 no longer validate; receipts recorded against them refuse with a
+remedy to rerun `kmx eval` and `kmx push`. There is no migration reader.
 
 `native-orka.json` records the member, renderer version and required images.
 The alternative kagent declaration is

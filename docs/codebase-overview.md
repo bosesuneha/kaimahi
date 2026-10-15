@@ -105,7 +105,7 @@ kmx create NAME
 workspace.Prepare
   -> frozen selected source
   -> public AgentSuite graph
-  -> private native profile and case inventory
+  -> public evaluation index and cases, plus private native profile
   -> validated private OCI layout in KMX state
 
 kmx eval

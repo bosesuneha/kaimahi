@@ -264,8 +264,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md), the
 - Preserve KMX's authored assertion `id`/`type`/operand spellings when mapping
   cases; public JSON identities are not private YAML/framed receipt identities.
   Results remain external to the evaluation tree and bind the exact OCI suite
-  manifest. Do not infer KMX migration from this public format; its private
-  `metadata/kmx/eval/` authoring and receipt consumers remain unchanged.
+  manifest.
 
 ## kagent version boundary
 
@@ -300,9 +299,9 @@ canonical; kagent/Sessions/judge behavior and all existing timeouts are unchange
   reference. Legacy `expectContains` entries keep `expectContains.N` IDs so
   assertion definition digests are unchanged. Private native metadata carries no
   case inventory. Packaged readers convert cases back through one decoder,
-  carry `runs`/`minPasses`, and refuse `critical` and extension assertion types
-  rather than ignoring them. Receipts record packaged case paths and digests of the
-  packaged JSON bytes. Suites with cases under `metadata/kmx/eval/` refuse with
+  carry `runs`/`minPasses`, and refuse `critical: false` and extension assertion
+  types rather than ignoring them. Receipts record packaged case paths and digests of the
+  packaged JSON bytes. Receipts with `metadata/kmx/eval/` case paths refuse with
   a fixed rerun remedy; do not add a migration reader.
 
 ## Verification
