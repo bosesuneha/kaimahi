@@ -17,7 +17,7 @@ import (
 
 func TestLegacySuitePassingReceiptByteGoldens(t *testing.T) {
 	// Freeze random run/request identities; packaged subjects and inventory stay exact.
-	golden := map[string]string{"native-orka": "2e664251be70775ed5e8179230bb526afeced89eb295574e57a04a4fabd83669", "native-kagent": "8220c46d80bae6068a7d03b8ab4fdffe74be3bdf85b10ec610d1dd34d81731ae"}
+	golden := map[string]string{"native-orka": "6e344587d53810e54fc19a1ad2072bdd2828867b13c565919f23d7ed0cb944a3", "native-kagent": "176986dfc28592531c075a13201b235c761222ad85bf5dc4236891517e7a3b9f"}
 	for mode, r := range suiteDiffFixtures(t) {
 		r.RunID = strings.Repeat("a", 32)
 		for i := range r.Cases {

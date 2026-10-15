@@ -86,7 +86,8 @@ func rebindEvals(t *testing.T, out string, mutate func(index *spec.EvaluationInd
 		t.Fatal(err)
 	}
 	writeFile(t, caseName, string(cb))
-	if index.Cases[0].Digest, err = spec.Digest(cb); err != nil {
+	index.Cases[0].Descriptor.Size = int64(len(cb))
+	if index.Cases[0].Descriptor.Digest, err = spec.Digest(cb); err != nil {
 		t.Fatal(err)
 	}
 	ib, err := spec.Marshal(index)
@@ -95,7 +96,8 @@ func rebindEvals(t *testing.T, out string, mutate func(index *spec.EvaluationInd
 	}
 	writeFile(t, indexName, string(ib))
 	rebindAgent(t, out, func(agent *spec.Agent) {
-		if agent.Evals[0].Digest, err = spec.Digest(ib); err != nil {
+		agent.Evals[0].Descriptor.Size = int64(len(ib))
+		if agent.Evals[0].Descriptor.Digest, err = spec.Digest(ib); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -127,7 +129,8 @@ func rebindAgent(t *testing.T, out string, mutate func(*spec.Agent)) {
 	if err := spec.Unmarshal(readFile(t, filepath.Join(out, "agentsuite.json")), &suite); err != nil {
 		t.Fatal(err)
 	}
-	if suite.Agents[0].Digest, err = spec.Digest(mb); err != nil {
+	suite.Agents[0].Descriptor.Size = int64(len(mb))
+	if suite.Agents[0].Descriptor.Digest, err = spec.Digest(mb); err != nil {
 		t.Fatal(err)
 	}
 	sb, err := spec.Marshal(suite)

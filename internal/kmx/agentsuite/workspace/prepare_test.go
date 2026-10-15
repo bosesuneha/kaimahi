@@ -66,15 +66,18 @@ func TestPrepareExactNativeArtifactAndReuse(t *testing.T) {
 	if err := spec.Unmarshal(readFile(t, filepath.Join(out, "evals/greeter/index.json")), &index); err != nil {
 		t.Fatal(err)
 	}
-	indexDigest, err := spec.Digest(readFile(t, filepath.Join(out, "evals/greeter/index.json")))
+	indexBytes := readFile(t, filepath.Join(out, "evals/greeter/index.json"))
+	indexDigest, err := spec.Digest(indexBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(member.Evals) != 1 || member.Evals[0] != (spec.FileRef{Path: "evals/greeter/index.json", Digest: indexDigest}) {
+	wantIndex := spec.FileRef{Path: "evals/greeter/index.json", Descriptor: spec.Descriptor{MediaType: spec.MediaTypeEvaluationIndex, Digest: indexDigest, Size: int64(len(indexBytes))}}
+	if len(member.Evals) != 1 || !reflect.DeepEqual(member.Evals[0], wantIndex) {
 		t.Fatalf("member does not bind its evaluation index: %+v", member.Evals)
 	}
-	caseDigest := digest.FromBytes(readFile(t, filepath.Join(out, "evals/greeter/cases/example.json"))).String()
-	if index.Agent != "greeter" || len(index.Cases) != 1 || index.Cases[0] != (spec.FileRef{Path: "evals/greeter/cases/example.json", Digest: caseDigest}) || index.Limits != (spec.EvaluationLimits{MaxCases: 128, MaxCaseBytes: 1 << 20}) {
+	caseBytes := readFile(t, filepath.Join(out, "evals/greeter/cases/example.json"))
+	wantCase := spec.FileRef{Path: "evals/greeter/cases/example.json", Descriptor: spec.Descriptor{MediaType: spec.MediaTypeEvaluationCase, Digest: digest.FromBytes(caseBytes).String(), Size: int64(len(caseBytes))}}
+	if index.Agent != "greeter" || len(index.Cases) != 1 || !reflect.DeepEqual(index.Cases[0], wantCase) || index.Limits != (spec.EvaluationLimits{MaxCases: 128, MaxCaseBytes: 1 << 20}) {
 		t.Fatalf("evaluation index mismatch: %+v", index)
 	}
 	if _, err := os.Lstat(filepath.Join(out, "metadata/kmx/eval")); !os.IsNotExist(err) {
@@ -84,7 +87,7 @@ func TestPrepareExactNativeArtifactAndReuse(t *testing.T) {
 	if err := json.Unmarshal(readFile(t, filepath.Join(out, "metadata/kmx/native-orka.json")), &metadata); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]any{"schemaVersion": float64(2), "executionMode": "native-orka", "member": "greeter", "rendererVersion": "kmx.native-orka/v1", "requiredImages": []any{}}
+	want := map[string]any{"schemaVersion": float64(2), "executionMode": "native-orka", "member": "greeter", "rendererVersion": "kmx.native-orka/v2", "requiredImages": []any{}}
 	if !reflect.DeepEqual(metadata, want) {
 		t.Fatalf("invalid native metadata: %+v", metadata)
 	}

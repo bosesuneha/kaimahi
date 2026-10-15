@@ -49,7 +49,7 @@ def native_digest(domain, value):
 
 
 def fingerprint(files):
-    return "sha256:" + sha(canonical({"renderer": "kmx.native-orka/v1", "layout": "kmx.native-suite-evals/v2",
+    return "sha256:" + sha(canonical({"renderer": "kmx.native-orka/v2", "layout": "kmx.native-suite-evals/v2",
                                       "files": {p: "sha256:" + sha(b) for p, b in files.items()}}))
 
 
