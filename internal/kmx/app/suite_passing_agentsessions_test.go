@@ -2,7 +2,9 @@ package app
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,9 +54,13 @@ func TestSuiteSessionsPassingRoundTripAndCoherence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	r.RunID = strings.Repeat("a", 32)
 	raw, err := canonicalSuitePassingReceipt(t.Context(), r, p.suite)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(raw)); got != "526084bf67a36403c997b8cab76098ec1824ce12443013e8b101c883b6a9903d" {
+		t.Fatalf("single-run Sessions byte golden: %s", got)
 	}
 	if r.suiteDigest() != p.suite.Digest || bytes.Contains(raw, []byte(`"subject":null`)) || bytes.Contains(raw, []byte(`"provider"`)) || bytes.Contains(raw, []byte(`"output"`)) {
 		t.Fatalf("incorrect metadata projection: %s", raw)
